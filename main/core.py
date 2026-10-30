@@ -22,6 +22,7 @@ DATA = Path(__file__).resolve().parent
 APP_ROOT = DATA.parent
 CONFIG = Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config')) / 'kite/config.yaml'
 STATE = Path(os.environ.get('XDG_STATE_HOME', Path.home() / '.local/state')) / 'kite/usage.json'
+MAX_CLIPBOARD_BYTES = 32 * 1024 * 1024
 
 
 @dataclass
@@ -403,8 +404,8 @@ def validate_copy_command(value):
         raise ValueError('clipboard.copy_command must be auto or a nonempty argv list (32 arguments, 16 KiB maximum)')
 
 
-def copy_bytes(data: bytes, setting: str | list[str] = 'auto', mime='text/plain;charset=utf-8'):
-    """One copy attempt; payload stays on stdin, never in command arguments."""
+def clipboard_command(data: bytes, setting: str | list[str] = 'auto', mime='text/plain;charset=utf-8'):
+    """Resolve the host's clipboard argv without executing it or exposing payload bytes."""
     validate_copy_command(setting)
     text = mime.startswith('text/')
     if setting != 'auto':
@@ -424,6 +425,12 @@ def copy_bytes(data: bytes, setting: str | list[str] = 'auto', mime='text/plain;
             raise ValueError('X11 copying requires xclip (text/images) or xsel (text); or configure clipboard.copy_command')
     else:
         raise ValueError('No Wayland/X11 display detected; configure clipboard.copy_command')
+    return argv
+
+
+def copy_bytes(data: bytes, setting: str | list[str] = 'auto', mime='text/plain;charset=utf-8'):
+    """One copy attempt; payload stays on stdin, never in command arguments."""
+    argv = clipboard_command(data, setting, mime)
     try:
         # Clipboard owners may fork and retain stdio; never wait on their output pipes.
         command(argv, input=data, capture_output=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -431,9 +438,48 @@ def copy_bytes(data: bytes, setting: str | list[str] = 'auto', mime='text/plain;
         raise ValueError('Copy command failed or timed out; clipboard may have changed. Check before retrying.') from error
 
 
+def decode_clipboard(value):
+    try:
+        data = command(['cliphist', 'decode'], input=value.encode()).stdout
+    except FileNotFoundError as error:
+        raise ValueError('Clipboard history requires cliphist; install it and configure a clipboard watcher.') from error
+    except subprocess.CalledProcessError as error:
+        raise ValueError('This history entry is unavailable; it may have changed or been removed. Reopen Clipboard to refresh the list.') from error
+    if len(data) > MAX_CLIPBOARD_BYTES:
+        raise ValueError('Clipboard entry exceeds the 32 MiB restore limit; nothing was copied.')
+    return data
+
+
+def clipboard_payload(value):
+    from PySide6.QtCore import QMimeDatabase
+    data = decode_clipboard(value)
+    mime = QMimeDatabase().mimeTypeForData(data).name()
+    return data, 'text/plain;charset=utf-8' if mime == 'text/plain' else mime
+
+
 def clipboard_type(text):
     from .bundled_plugins.clipboard import content_type
     return content_type(text)
+
+
+def clipboard_preview(data):
+    from PySide6.QtCore import QBuffer, QIODevice, Qt
+    from PySide6.QtGui import QImage
+    image = QImage.fromData(data)
+    if not image.isNull():
+        dimensions = f'{image.width()} × {image.height()}'
+        image = image.scaled(720, 420, Qt.AspectRatioMode.KeepAspectRatio,
+                             Qt.TransformationMode.SmoothTransformation)
+        buffer = QBuffer()
+        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+        image.save(buffer, 'PNG')  # pyright: ignore[reportCallIssue, reportArgumentType]
+        return {'preview': base64.b64encode(bytes(buffer.data().data())).decode(),
+                'type': 'Image', 'dimensions': dimensions, 'size': len(data)}
+    try:
+        text = data.decode('utf-8')
+    except UnicodeDecodeError:
+        return {'preview': 'Binary content — no preview available', 'type': 'Binary', 'size': len(data)}
+    return {'preview': text[:12000], 'type': clipboard_type(text), 'size': len(data)}
 
 
 def provider(kind: str, query: str = '', value: str = '', copy_command: str | list[str] = 'auto'):
@@ -462,26 +508,11 @@ def provider(kind: str, query: str = '', value: str = '', copy_command: str | li
         from .bundled_plugins.clipboard import search
         from .host_services import context, rows
         return [row.json() for row in rows(search(query, context({})))]
+    if kind == 'clip-data':
+        data, mime = clipboard_payload(value)
+        return {'data': base64.b64encode(data).decode('ascii'), 'mime': mime, 'preview': clipboard_preview(data)}
     if kind == 'clip-preview':
-        from PySide6.QtCore import QBuffer, QIODevice, Qt
-        from PySide6.QtGui import QImage
-        data = command(['cliphist', 'decode'], input=value.encode()).stdout
-        image = QImage.fromData(data)
-        if not image.isNull():
-            dimensions = f'{image.width()} × {image.height()}'
-            image = image.scaled(720, 420, Qt.AspectRatioMode.KeepAspectRatio,
-                                 Qt.TransformationMode.SmoothTransformation)
-            buffer = QBuffer()
-            buffer.open(QIODevice.OpenModeFlag.WriteOnly)
-            # PySide runtime requires str here; its bundled signature incorrectly advertises bytes.
-            image.save(buffer, 'PNG')  # pyright: ignore[reportCallIssue, reportArgumentType]
-            return {'preview': base64.b64encode(bytes(buffer.data().data())).decode(),
-                    'type': 'Image', 'dimensions': dimensions, 'size': len(data)}
-        try:
-            text = data.decode('utf-8')
-        except UnicodeDecodeError:
-            return {'preview': 'Binary content — no preview available', 'type': 'Binary', 'size': len(data)}
-        return {'preview': text[:12000], 'type': clipboard_type(text), 'size': len(data)}
+        return clipboard_preview(decode_clipboard(value))
     if kind == 'windows':
         from .windows import list_windows
         return [Result(w['target'], w['title'],
@@ -497,11 +528,7 @@ def provider(kind: str, query: str = '', value: str = '', copy_command: str | li
     if kind == 'copy':
         copy_bytes(value.encode(), copy_command)
     elif kind == 'clip':
-        from PySide6.QtCore import QMimeDatabase
-        decoded = command(['cliphist', 'decode'], input=value.encode()).stdout
-        mime = QMimeDatabase().mimeTypeForData(decoded).name()
-        if mime == 'text/plain':
-            mime = 'text/plain;charset=utf-8'
+        decoded, mime = clipboard_payload(value)
         copy_bytes(decoded, copy_command, mime)
     elif kind == 'focus':
         from .windows import focus_window

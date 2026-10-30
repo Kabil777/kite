@@ -85,6 +85,15 @@ def check_copy_feedback():
                 assert window.toast.close_button.accessibleName() == 'Dismiss notification'
                 window.toast.dismiss()
                 assert not window.toast.title.text() and not window.toast.message.text()
+                snapshot = (b'fixture', 'text/plain', {'preview': 'fixture'}, 519)
+                window.jobs.clipboard_cache['fixture'] = snapshot
+                window.jobs.clipboard_cache_bytes = 519
+                window.set_mode('calc')
+                assert not window.jobs.clipboard_cache and window.jobs.clipboard_cache_bytes == 0
+                window.jobs.clipboard_cache['fixture'] = snapshot
+                window.jobs.clipboard_cache_bytes = 519
+                window.close(); app.processEvents()
+                assert not window.jobs.clipboard_cache and window.jobs.clipboard_cache_bytes == 0
             finally:
                 window.jobs.stop(); window.close(); app.processEvents()
     print('Copy feedback OK: copies stay open, errors/success use safe toasts, app/focus still close; centered short/wrapped banners at normal/narrow widths')

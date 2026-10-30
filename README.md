@@ -48,7 +48,7 @@ Bind `~/.local/bin/kite` to your preferred shortcut in your desktop's keyboard s
 | --- | --- |
 | Copy on Wayland | `wl-clipboard` |
 | Copy on X11 | `xclip`, or text-only `xsel` |
-| Clipboard history | `cliphist` and a compatible watcher configured by you |
+| Clipboard history | Separately install [cliphist and its watcher](docs/clipboard.md#clipboard-history-is-separate); it is not included by default |
 | Window switching | The [helper for your desktop](docs/desktop.md) |
 | Rust search | Follow the [optional Rust setup](examples/rust-ranking/HOWTO.md); Python search is the default |
 | Extra plugins | Browse the [plugin registry](https://github.com/Kabil777/kite_plugins) and follow the plugin's README |

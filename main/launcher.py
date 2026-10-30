@@ -11,8 +11,10 @@ import sys
 import sqlite3
 import math
 import threading
+import time
 import unicodedata
 from dataclasses import asdict
+from collections import OrderedDict
 from urllib.parse import urlencode, urlparse
 
 from PySide6.QtCore import (QEvent, QLockFile, QObject, QProcess, QRect, QSize, Qt, QTimer, QUrl)
@@ -23,7 +25,7 @@ from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QLineE
                                QStyleOptionViewItem, QVBoxLayout, QPlainTextEdit, QStackedWidget, QSizePolicy,
                                QWidget)
 
-from .core import APP_ROOT, CONFIG, DATA, STATE, Result, load_config, math_like, rank, suggestions
+from .core import APP_ROOT, CONFIG, DATA, STATE, MAX_CLIPBOARD_BYTES, Result, clipboard_command, load_config, math_like, rank, suggestions
 from .ranking import record_visit
 from .root_ranking import RootRanking
 from .favorites import FavoritesStore
@@ -38,6 +40,9 @@ from .plugin_runtime import Call as PluginCall, Runtime as PluginRuntime
 from .host_services import context as plugin_context, plugin_row, rows as plugin_rows
 
 
+CLIPBOARD_CACHE_BYTES = 64 * 1024 * 1024
+
+
 def plugin_command(identifier, manifest):
     icon, glyph = plugin_icon(identifier, manifest.get('glyph', ''))
     return Result('plugin:' + identifier, manifest['name'], 'Plugin', icon, 'plugin', identifier, glyph=glyph)
@@ -50,6 +55,9 @@ class Jobs(QObject):
         self.copy_command = copy_command
         self.running = {}
         self.retiring = {}
+        self.clipboard_cache = OrderedDict()
+        self.clipboard_cache_bytes = 0
+        self.clipboard_generation = 0
 
     def plugin_services_idle(self):
         return not any(key.startswith('plugin-service:') for key in (*self.running, *self.retiring.values()))
@@ -60,7 +68,7 @@ class Jobs(QObject):
             self.retiring[process] = key
             process.kill()
 
-    def start(self, key, argv, request, callback, timeout=2500, cwd=None):
+    def start(self, key, argv, request, callback, timeout=2500, cwd=None, raw_input=None):
         self.cancel(key)
         process = QProcess(self)
         self.running[key] = process
@@ -77,9 +85,12 @@ class Jobs(QObject):
                 callback(payload)
 
         def read():
+            if raw_input is not None:
+                return
             output.extend(process.readAllStandardOutput().data())
             process.readAllStandardError()
-            limit = 2 * 1024 * 1024 if key in ('apps', 'clip-preview') or key.startswith('plugin-service:') else 262144
+            limit = 64 * 1024 * 1024 if request.get('kind') == 'clip-data' else (
+                2 * 1024 * 1024 if key in ('apps', 'clip-preview') or key.startswith('plugin-service:') else 262144)
             if len(output) > limit:
                 done({'error': f'Provider output exceeded {limit // 1024} KiB'})
                 process.kill()
@@ -88,7 +99,11 @@ class Jobs(QObject):
             self.retiring.pop(process, None)
             read()
             try:
-                payload = json.loads(output)
+                if raw_input is not None:
+                    payload = ({'results': []} if process.exitCode() == 0 and process.exitStatus() == QProcess.ExitStatus.NormalExit else
+                               {'error': 'Copy command failed; clipboard may have changed. Check before retrying.'})
+                else:
+                    payload = json.loads(output)
                 if not isinstance(payload, dict):
                     raise ValueError('Expected a JSON object')
             except (ValueError, UnicodeError):
@@ -109,7 +124,10 @@ class Jobs(QObject):
                 done({'error': process.errorString()})
                 process.deleteLater()
         process.errorOccurred.connect(failed)
-        process.started.connect(lambda: (process.write(json.dumps(request).encode() + b'\n'),
+        if raw_input is not None:
+            process.setStandardOutputFile(QProcess.nullDevice())
+            process.setStandardErrorFile(QProcess.nullDevice())
+        process.started.connect(lambda: (process.write(raw_input if raw_input is not None else json.dumps(request).encode() + b'\n'),
                                          process.closeWriteChannel()))
         timer.timeout.connect(expired)
         if cwd is not None:
@@ -117,14 +135,92 @@ class Jobs(QObject):
         process.start(argv[0], argv[1:])
         timer.start(timeout)
 
+    def clear_clipboard_cache(self):
+        self.clipboard_cache.clear()
+        self.clipboard_cache_bytes = 0
+        self.clipboard_generation += 1
+
+    def restore_clipboard(self, key, identifier, callback, timeout):
+        if not isinstance(identifier, str):
+            callback({'error': 'Invalid clipboard history identifier'})
+            return
+        generation = self.clipboard_generation
+        deadline = time.monotonic() + timeout / 1000
+
+        def copy_cached(entry):
+            data, mime, _, _ = entry
+            try:
+                argv = clipboard_command(data, self.copy_command, mime)
+            except (OSError, ValueError) as error:
+                callback({'error': str(error)})
+                return
+            remaining = math.floor((deadline - time.monotonic()) * 1000)
+            if remaining <= 0:
+                callback({'error': 'Clipboard restoration timed out; nothing was copied.'})
+                return
+            self.start(key, argv, {}, callback, min(3000, remaining), raw_input=data)
+
+        cached = self.clipboard_cache.get(identifier)
+        if cached is not None:
+            self.clipboard_cache.move_to_end(identifier)
+            copy_cached(cached)
+            return
+
+        def decoded(payload):
+            if payload.get('error'):
+                callback(payload)
+                return
+            try:
+                result = payload['results']
+                mime = result['mime']
+                preview = result['preview']
+                if not isinstance(preview, dict) or not isinstance(preview.get('preview'), str):
+                    raise ValueError('Invalid clipboard preview')
+                if not isinstance(mime, str) or not mime or len(mime) > 256 or '\0' in mime:
+                    raise ValueError('Invalid clipboard MIME type')
+                data = base64.b64decode(result['data'], validate=True)
+                if len(data) > MAX_CLIPBOARD_BYTES:
+                    raise ValueError('Clipboard entry exceeds the 32 MiB restore limit')
+            except (KeyError, TypeError, ValueError):
+                callback({'error': 'Could not decode the clipboard entry; nothing was copied.'})
+                return
+            # ponytail: 64-MiB/500-entry view cache; evicted stale IDs require a list refresh.
+            # cliphist replaces IDs on re-store. Never persist these exact-byte snapshots.
+            cost = len(data) + len(preview['preview'].encode()) + len(identifier.encode()) + 512
+            entry = (data, mime, preview, cost)
+            if generation == self.clipboard_generation and cost <= CLIPBOARD_CACHE_BYTES:
+                previous = self.clipboard_cache.pop(identifier, None)
+                if previous is not None:
+                    self.clipboard_cache_bytes -= previous[3]
+                while self.clipboard_cache and (self.clipboard_cache_bytes + cost > CLIPBOARD_CACHE_BYTES
+                                                 or len(self.clipboard_cache) >= 500):
+                    _, old = self.clipboard_cache.popitem(last=False)
+                    self.clipboard_cache_bytes -= old[3]
+                self.clipboard_cache[identifier] = entry
+                self.clipboard_cache_bytes += cost
+            copy_cached(entry)
+
+        self.builtin(key, {'kind': 'clip-data', 'value': identifier}, decoded, timeout)
+
     def builtin(self, key, request, callback, timeout=2500):
-        if request.get('kind') in ('copy', 'clip'):
+        cached = self.clipboard_cache.get(request.get('value')) if isinstance(request.get('value'), str) else None
+        if request.get('kind') == 'clip-preview' and cached is not None:
+            QTimer.singleShot(0, lambda: callback({'results': cached[2]})
+                              if self.clipboard_cache.get(request['value']) is cached else None)
+            return
+        if request.get('kind') == 'clip':
+            self.restore_clipboard(key, request['value'], callback, timeout)
+            return
+        if request.get('kind') in ('clipboard', 'clipboard-list'):
+            self.clear_clipboard_cache()
+        if request.get('kind') == 'copy':
             request = {**request, 'copy_command': self.copy_command}
         argv = ([sys.executable, '-B', '-m', 'main.plugin_worker', '--service'] if key.startswith('plugin-service:')
                 else [sys.executable, '-m', 'main.core'])
         self.start(key, argv, request, callback, timeout, cwd=APP_ROOT)
 
     def stop(self):
+        self.clear_clipboard_cache()
         processes = list(self.running.values()) + list(self.retiring)
         for key in list(self.running):
             self.cancel(key)
@@ -849,6 +945,7 @@ class Launcher(QWidget):
             self.close_plugin_help()
         self.jobs.cancel('mode')
         self.jobs.cancel('clip-preview')
+        self.jobs.clear_clipboard_cache()
         for token in self.plugin_tokens.values():
             token.set()
         self.plugin_tokens.clear()
@@ -2113,6 +2210,7 @@ class Launcher(QWidget):
             event.ignore()
             return
         self.closing_workers = True
+        self.jobs.clear_clipboard_cache()
         self.applications.stop()
         self.apps_refresh_timer.stop()
         self.root_ranking.cancel()

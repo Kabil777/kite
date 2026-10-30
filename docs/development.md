@@ -39,12 +39,13 @@ These commands use the project's existing environment:
 QT_QPA_PLATFORM=offscreen uv run --locked --no-sync python -m tests.check_frontend
 QT_QPA_PLATFORM=offscreen uv run --locked --no-sync python -m tests.check_applications
 uv run --locked --no-sync python -m tests.check_app_launch
+uv run --locked --no-sync python -m tests.check_clipboard_repeat
 uv run --locked --no-sync python -m tests.check_ranking
 uv run --locked --no-sync python -m tests.check_plugin_manager
 uv run --locked --no-sync python -m tests.check_docs
 ```
 
-The app-launch check starts only a short-lived synthetic desktop entry. Cache checks use temporary XDG directories and a synthetic Gio application database. Neither check needs your password store or clipboard.
+The app-launch check starts only a short-lived synthetic desktop entry. Cache checks use temporary XDG directories and a synthetic Gio application database. Neither check needs your password store or clipboard. The repeat-history check needs the `cliphist` binary and uses only a temporary database and fake copy program; it does not read or change real clipboard/history data.
 
 For supervised plugin lifecycle work, use:
 
