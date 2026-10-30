@@ -92,7 +92,10 @@ Gopass-specific integration checks use the sibling checkout above, or an explici
 
 ```sh
 uv run --locked --no-sync python -m tests.check_gopass_sync
+uv run --locked --no-sync python -m tests.check_gopass_copy
 ```
+
+The copy check sends a dummy value through the plugin action and fake Wayland/X11 copy programs. It verifies CLIPBOARD selection and stdin bytes without touching a live clipboard or password store.
 
 The baseline check reports its optional Gopass case as skipped if that source is absent; ordinary core checks do not require installing the plugin. The legacy broad script and Gopass-specific UI checks need the optional source checkout as well.
 

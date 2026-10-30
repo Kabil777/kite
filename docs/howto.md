@@ -23,6 +23,8 @@ Two quick entries from the main screen:
 
 In Clipboard, select an item to preview it; press Enter to restore it. In Emoji, find an emoji and press Enter to copy it. Opening these tools does not paste into another application for you.
 
+Web Search sends its suggestion queries to Google. Normal application search stays local by default; root suggestions can be enabled separately in settings.
+
 ## Calculate while typing
 
 Type a calculation in the main search or open **Calculator**. Results update while you type; Enter copies the answer and keeps KITE open.
@@ -42,7 +44,7 @@ Open **Switch windows**, type part of a window title or app name, then choose it
 
 Hyprland, Sway and niri use their own commands. X11 desktops need `wmctrl`. KDE Plasma 6 Wayland needs recent `kdotool`; GNOME Wayland needs a compatible, enabled Window Commander extension. Other compatible Wayland compositors can use the limited `wlrctl` fallback, which cannot distinguish windows with identical app/title pairs.
 
-If the interface/helper is missing, read the setup error rather than assuming no windows are open. Not every Wayland compositor allows external window switching. See [desktop requirements](../README.md#window-switching-across-desktops) for exact requirements and verification limits; new integrations have not been checked in live desktops during this change.
+If the interface/helper is missing, read the setup error rather than assuming no windows are open. Not every Wayland compositor allows external window switching. See [desktop requirements](desktop.md) for exact requirements and verification limits; new integrations have not been checked in live desktops during this change.
 
 ## See what you can do with a result
 
@@ -123,9 +125,9 @@ Escape or Ctrl+? closes the guide and returns to your screen. Plugin action shor
 - **Package changes say cleanup is pending:** leave disabled flags in place and use Check cleanup / recover after resolving the reported worker/systemd failure. Authored/development packages are never adopted or uninstalled automatically.
 - **External tools are unavailable:** check that your systemd user session is running; these packages require supervised workers. The optional Rust ranker uses its separate bounded direct-child setup, explained in its [guide](../examples/rust-ranking/HOWTO.md). Native tools still work. Older API-v1 packages need a v2 update from their maintainer; after fixing setup, restart KITE.
 - **An installed app has not appeared yet:** KITE shows its cached list first, then refreshes it in the background. Installs, removals and edits normally update automatically. If the application monitor reports a problem, close and reopen KITE to run a fresh scan. Do not delete plugin-manager state to refresh applications.
-- **Clipboard cannot copy:** install `wl-clipboard` on Wayland or `xclip` on X11 (`xsel` handles text only). For another tool, set `clipboard.copy_command` to an argv list in YAML and restart; see [copy settings](../README.md#clipboard-copying-across-linux-desktops). No shell command strings are accepted. A failed copy may already have changed the clipboard; check before retrying.
+- **Clipboard cannot copy:** install `wl-clipboard` on Wayland or `xclip` on X11 (`xsel` handles text only). For another tool, set `clipboard.copy_command` to an argv list in YAML and restart; see [copy settings](clipboard.md). No shell command strings are accepted. A failed copy may already have changed the clipboard; check before retrying.
 - **Clipboard history is unavailable:** history still requires `cliphist` and its compatible watcher; changing the copy command does not replace that history backend.
-- **Window switching is unavailable:** check the helper for your desktop in [desktop requirements](../README.md#window-switching-across-desktops). Wayland will not silently show only XWayland windows. Reopen the window list if a selected window has closed; identical app/title pairs cannot be focused safely through the generic wlroots fallback.
+- **Window switching is unavailable:** check the helper for your desktop in [desktop requirements](desktop.md). Wayland will not silently show only XWayland windows. Reopen the window list if a selected window has closed; identical app/title pairs cannot be focused safely through the generic wlroots fallback.
 - **A trigonometric answer changed:** degrees are now the default. Add `r` for radians, for example `sin (pi/2)r`.
 - **A plugin asks you to unlock a key:** finish its GPG/age or SSH prompt. Escape can cancel the current screen; an operation already sent may have completed.
 - **An error remains visible:** read its message, fix the reported setup problem, then retry. Dismissing an error does not retry the operation.

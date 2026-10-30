@@ -438,4 +438,4 @@ The gopass example is not automatically installed. A retrieved password is never
 
 ## Older executable extensions
 
-Prefix-based JSON extensions remain a separate integration option. A configured executable receives `{"version": 1, "query": "..."}` on stdin and returns a JSON result object on stdout. These keep their one-shot JSON-v1 process protocol; they are separate from API-v2 worker packages. They are also trusted code, with bounded output/time and argv-based execution. See [Python extensions in the README](../README.md#python-extensions) and [`examples/uppercase.py`](../examples/uppercase.py).
+Prefix-based JSON extensions remain a separate integration option. A configured executable receives `{"version": 1, "query": "..."}` on stdin and returns a JSON result object on stdout. These keep their one-shot JSON-v1 process protocol; they are separate from API-v2 worker packages. They are also trusted code, with bounded output/time and argv-based execution. See [prefix-extension reference](extensions.md) and [`examples/uppercase.py`](../examples/uppercase.py).
