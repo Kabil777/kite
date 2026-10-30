@@ -1,0 +1,6 @@
+{
+  "id": "clipboard",
+  "name": "Clipboard history",
+  "api_version": 2,
+  "entry": "__init__.py"
+}

@@ -1,0 +1,6 @@
+{
+  "id": "emoji",
+  "name": "Emoji",
+  "api_version": 2,
+  "entry": "__init__.py"
+}

@@ -1,0 +1,7 @@
+{
+  "id": "node-ranking",
+  "name": "Node substring ranking",
+  "api_version": 2,
+  "role": "ranking",
+  "command": ["node", "backend.mjs"]
+}

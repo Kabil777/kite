@@ -1,0 +1,6 @@
+{
+  "id": "ranking",
+  "name": "Built-in search ranking",
+  "api_version": 2,
+  "role": "ranking"
+}

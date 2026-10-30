@@ -1,0 +1,14 @@
+[project]
+name = "kite"
+version = "0.1.0"
+description = "KITE — a native Qt launcher"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "PySide6-Essentials==6.12.0",
+    "PyYAML==6.0.3",
+    "sympy==1.14.0",
+]
+
+[tool.uv]
+package = false

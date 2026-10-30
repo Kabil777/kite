@@ -1,0 +1,6 @@
+{
+  "id": "web",
+  "name": "Search web",
+  "api_version": 2,
+  "entry": "__init__.py"
+}

@@ -1,0 +1,71 @@
+# Pixels unless noted. User overrides: ~/.config/kite/config.yaml
+window:
+  width: 750
+  height: 520
+  padding: 8
+  radius: 8
+search:
+  height: 72
+  padding: 18
+  font_family: Adwaita Sans
+  font_size: 20
+  placeholder: Search for apps and commands…
+results:
+  row_height: 48
+  # inline = title + description on one line; stacked = original two-line rows.
+  layout: inline
+  padding: 12
+  gap: 0
+  limit: 60
+  font_family: JetBrainsMono Nerd Font
+  font_size: 16
+icons:
+  theme: WhiteSur-dark
+  size: 28
+  search_size: 20
+footer:
+  visible: true
+  height: 46
+colors:
+  background: '#232428'
+  search: '#2a2b30'
+  selected: '#373940'
+  text: '#f1f2f5'
+  muted: '#a1a4af'
+  border: '#41434b'
+  accent: '#8fb9ff'
+math:
+  enabled: true
+  debounce_ms: 100
+  timeout_ms: 2500
+web:
+  enabled: true
+  # false: suggestions only in web mode; '?' switches modes and disappears.
+  # true: also sends ordinary root-search text to Google while typing.
+  suggest_in_root: false
+  debounce_ms: 250
+  timeout_ms: 2000
+  min_characters: 2
+  max_suggestions: 8
+  suggestion_font_size: 16
+clipboard:
+  # auto: wl-copy on Wayland; xclip, then text-only xsel on X11.
+  # Or argv list; optional {mime} argument placeholder, data always via stdin.
+  copy_command: auto
+emoji:
+  columns: 8
+  font_size: 32
+ranking:
+  engine: builtin # or an enabled plugin ID with role: ranking
+  sensitivity: medium
+  # Stores only queries used to launch apps/built-in commands, never tool contents.
+  learn_queries: true
+# Ordered result IDs; discover IDs with Ctrl+K → Copy Result ID.
+favorites: []
+aliases: []
+# aliases:
+#   - {id: 'cmd:clipboard', alias: cb}
+gopass:
+  store: '' # legacy default; prefer plugins.gopass.config.store
+plugins: {}
+extensions: []

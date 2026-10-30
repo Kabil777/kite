@@ -1,0 +1,9 @@
+{
+  "include": ["main", "tests", "plugin_api.py", "examples"],
+  "exclude": [".venv"],
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.14",
+  "typeCheckingMode": "basic",
+  "extraPaths": [".", "/usr/lib/python3.14/site-packages"]
+}

@@ -218,3 +218,19 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# KITE runtime/user data and local publication artifacts
+/plugins/
+/plugin-packages/
+/.plugin-staging/
+/plugin-backups/
+/.plugin-backup.*/
+/.memsearch/
+/.pi/
+/config.yaml
+/usage.json
+/favorites.sqlite*
+/kite.zip
+
+# The website is a separate, paused project.
+/website/
