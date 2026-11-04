@@ -14,8 +14,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def notices(package, sysroot):
-    metadata = json.loads(subprocess.check_output(['cargo', 'metadata', '--locked', '--format-version=1',
-                                                   '--manifest-path', str(package / 'Cargo.toml')]))
+    try:
+        metadata = json.loads(subprocess.check_output(['cargo', 'metadata', '--locked', '--format-version=1',
+                                                       '--manifest-path', str(package / 'Cargo.toml')]))
+    except (json.JSONDecodeError, subprocess.CalledProcessError) as error:
+        raise ValueError('Could not read locked Cargo metadata for release notices') from error
     parts = ['KITE native engine — third-party notices\n\n'
              'These collected notices cover the locked crates and Rust standard-library distribution. '
              'They do not declare a project-wide KITE license or imply that every listed component is linked.\n']
@@ -57,7 +60,10 @@ def smoke(binary, directory):
         {'jsonrpc': '2.0', 'method': 'shutdown', 'params': {}}]
     result = subprocess.run([str(binary)], input=''.join(json.dumps(message) + '\n' for message in messages).encode(),
                             capture_output=True, timeout=10, check=True)
-    replies = [json.loads(line) for line in result.stdout.splitlines()]
+    try:
+        replies = [json.loads(line) for line in result.stdout.splitlines()]
+    except json.JSONDecodeError as error:
+        raise ValueError('Native smoke test returned invalid protocol JSON') from error
     assert len(replies) == 3 and replies[0]['result']['ranking_version'] == 2
     assert replies[1]['result'] == {'catalog_revision': 1, 'count': 1}
     assert replies[2]['result'] == {'catalog_revision': 1, 'ordered_ids': ['fixture']}

@@ -118,7 +118,7 @@ def unchanged(directory):
 
 def install(source, app):
     from .plugin_api import _read_manifest
-    from .plugin_manager import Manager, UseLease, _private, mutation_lock
+    from .plugin_manager import Manager, UseLease, _decode, _private, mutation_lock
     source, app = Path(source).resolve(), Path(app).resolve()
     key = platform_key()
     data, record = manifest(source, key)
@@ -135,7 +135,7 @@ def install(source, app):
     if len(elf) < 64 or elf[:6] != b'\x7fELF\x02\x01' or int.from_bytes(elf[18:20], 'little') != PLATFORMS[key][1]:
         raise ValueError('Native executable is not the expected Linux architecture')
     package = source / 'examples/rust-ranking'
-    specification = json.loads((package / 'plugin.json').read_text())
+    specification = _decode(read_bytes(package / 'plugin.json', 16384))
     specification['command'] = ['./' + BINARY]
     blobs['plugin.json'] = (json.dumps(specification, indent=2) + '\n').encode()
     for name in GUIDES:
