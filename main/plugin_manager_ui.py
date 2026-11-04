@@ -54,7 +54,7 @@ class Marketplace(QObject):
         self.show_installed()
 
     def selected(self):
-        if self.page == 'uninstall':
+        if self.page in ('uninstall', 'plugin_config'):
             return self.target
         result = self.launcher.selected_result()
         return self.rows.get(result.value) if result and result.kind == 'marketplace_item' else None
@@ -266,6 +266,7 @@ class Marketplace(QObject):
                 self.launcher.show_toast(Toast('No plugin settings', self.status))
                 return
             self.error = ''
+            self.target = dict(row)
             self.page = 'plugin_config'
             self.publish()
         except (OSError, ValueError) as error:
