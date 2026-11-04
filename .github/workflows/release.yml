@@ -1,0 +1,115 @@
+name: Prebuilt application release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            platform: linux-x86_64
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            platform: linux-aarch64
+            target: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Check release version
+        run: |
+          python - <<'PY'
+          import os, tomllib
+          from pathlib import Path
+          version = tomllib.loads(Path('pyproject.toml').read_text())['project']['version']
+          assert os.environ['GITHUB_REF_NAME'] == 'v' + version, 'Tag and application version must match'
+          PY
+      - name: Install build toolchain (CI only)
+        run: |
+          rustup toolchain install stable --profile minimal --component rust-docs
+          rustup default stable
+          rustup target add '${{ matrix.target }}'
+      - name: Compile native search
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/kite-target
+        run: cargo build --release --locked --target '${{ matrix.target }}' --manifest-path examples/rust-ranking/Cargo.toml
+      - name: Test executable and package application
+        run: |
+          python -m tools.build_release --platform '${{ matrix.platform }}' \
+            --binary '${{ runner.temp }}/kite-target/${{ matrix.target }}/release/kite-flea-ranking'
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: native-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: native-*
+          path: dist
+          merge-multiple: true
+      - name: Merge verified platform descriptors
+        run: |
+          python - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          files = sorted(Path('dist').glob('native-assets-*.json'))
+          assert len(files) == 2, 'Both supported native builds are required'
+          merged = None
+          for path in files:
+              data = json.loads(path.read_text())
+              assert data['source_commit'] == subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+              assert 'v' + data['version'] == os.environ['GITHUB_REF_NAME']
+              if merged is None:
+                  merged = data
+              else:
+                  assert all(data[key] == merged[key] for key in ('schema', 'version', 'source_commit', 'source_sha256'))
+                  assert not merged['platforms'].keys() & data['platforms'].keys()
+                  merged['platforms'].update(data['platforms'])
+              path.unlink()
+          assert set(merged['platforms']) == {'linux-x86_64', 'linux-aarch64'}
+          Path('dist/native-assets.json').write_text(json.dumps(merged, indent=2) + '\n')
+          PY
+          (cd dist && sha256sum kite-* native-assets.json > SHA256SUMS)
+      - name: Publish immutable release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          cat > release-notes.md <<'EOF'
+          KITE's Python/Qt application source plus a ready-built Rust search executable.
+
+          Choose the Linux x86-64 or ARM64 application archive, extract it, and run `bash install.sh`.
+          Python 3.14+, uv, matching Gio bindings and Qt's native runtime libraries are still required.
+          Users do not need Cargo or a Rust compiler. Existing engine preferences and plugin overrides are preserved.
+
+          `native-assets.json` records architecture, glibc requirements, compiler/source identity, file sizes and SHA-256 checksums.
+          Rust/crate/Flea license notices are included. Unsupported systems can use `install.sh --python-only`.
+          EOF
+          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "KITE $GITHUB_REF_NAME" --notes-file release-notes.md

@@ -1,15 +1,14 @@
-# Rust Flea + KITE ranking plugin
+# Rust Flea + KITE search engine
 
-Standalone native backend for KITE's existing API-v2 ranking role. The licensed Flea matcher is vendored unchanged; KITE's own ordering policy is implemented in Rust. There is no JavaScript dependency or JavaScript ranking-code port. The backend advertises ranking contract 2: validated revisioned catalogs and normalized fields are cached, and subsequent queries carry only query/options. Legacy full contract-1 requests are also accepted. Restart KITE after updating the host/backend.
+**Users:** follow [HOWTO.md](HOWTO.md). Supported KITE releases provide a compiled executable and the installer registers it automatically. You do not need to build or link a plugin yourself.
 
-- [Build, install, select and verify](HOWTO.md)
-- [Source provenance and license boundary](PROVENANCE.md)
-- [KITE's shared worker protocol](../../docs/plugin-protocol.md)
+This directory is the **developer source** for that first-party native engine. Python/Qt still renders the UI and performs actions; Rust returns ordered candidate IDs over KITE's persistent shared RPC. The selected engine uses cached, revisioned catalogs and small per-query requests. The built-in Python engine remains available as default/fallback.
 
-```sh
-cargo build --release --locked
-```
+- [Build and test as a contributor](../../docs/development.md#build-and-test-the-optional-rust-engine)
+- [Release build/installer verification](../../docs/releases.md)
+- [Worker protocol](../../docs/plugin-protocol.md)
+- [Flea source provenance](PROVENANCE.md) and [license](LICENSE-FLEA)
 
-For a reviewed release ZIP, include only the `rust-ranking/` package tree: `plugin.json`, `target/release/kite-flea-ranking` (executable), `HOWTO.md`, `README.md`, `PROVENANCE.md`, `FLEA-PROVENANCE.md`, and `LICENSE-FLEA`. Do not archive the complete Cargo `target/` directory, caches, local state or credentials. Include source/license information for other distributed dependencies as required by their licenses. Release packaging/publication remains a separate maintainer action; no catalog entry or downloadable release is claimed here.
+Release builds happen in GitHub Actions, separately for Linux x86-64 and ARM64. Artifacts record the compiler, target, minimum glibc, source digest, sizes and SHA-256 checksums. Runtime/locked-crate notices accompany the binary; no JavaScript, Node or Rust toolchain is needed by users. The Python/Qt environment is still installed normally with uv.
 
-The checked-in `Cargo.lock` pins build dependencies. Normalization uses `unicode-normalization`; JSON uses `serde`/`serde_json`. Runtime needs neither Node nor the Rust toolchain. The manifest selects `execution: child`: KITE starts the compiled executable once as a direct child, without a Python adapter, Rust binding or systemd unit. Linux `setpriv`/`flock`/`prlimit`/`sh` exec into that same child PID to enforce parent-death cleanup, package leases, a 768-MiB virtual-address-space limit and no forks/threads. The process is reused across queries. Other plugins keep their existing supervision; see [execution limits](../../docs/plugin-protocol.md#cancellation-lifecycle-and-trust).
+The source manifest's `target/release` command is for development. The installer creates its own verified package under KITE's `native/rust-ranking` directory with a direct executable command, preserving existing user or marketplace overrides. Do not archive an entire Cargo target directory or install over another package by hand.

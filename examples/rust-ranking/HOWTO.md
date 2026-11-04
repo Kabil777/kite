@@ -1,79 +1,53 @@
-# Use Rust Flea + KITE ranking
+# Use native Rust search
 
-An optional search plugin: native Flea matching with KITE's ordering/history policy. Python/Qt still renders and performs actions. **No JavaScript, Node, Quickshell or oma-cast installation is required.** Your existing Python fuzzy policy stays available as the default and fallback.
+KITE releases include a **precompiled Rust search engine** for supported Linux x86-64 and ARM64 systems. You do not need Cargo, a Rust toolchain, manual compilation or a development link. Python/Qt still owns the interface and actions.
 
-## Build
+## Install
 
-Install a Rust toolchain first. From your KITE checkout root:
-
-```sh
-cd examples/rust-ranking
-cargo build --release --locked
-```
-
-Keep this terminal in `examples/rust-ranking` for the link command below.
-
-The command may download the locked crates on its first build. It creates `target/release/kite-flea-ranking`, which the manifest runs directly. The built executable does not need Cargo or Rust installed to run. Builds are target-specific; use a matching Linux architecture/libc. Do not assume the locally tested binary runs on every distribution.
-
-## Install and select
-
-Close KITE first. Copy this package (including the built executable), or create an explicit development link under:
-
-```text
-${XDG_CONFIG_HOME:-$HOME/.config}/kite/plugin/rust-ranking/
-```
-
-For a local checkout, make the link from the package directory where you just built it:
+Use the normal KITE installer:
 
 ```sh
-mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/kite/plugin"
-ln -sT -- "$PWD" "${XDG_CONFIG_HOME:-$HOME/.config}/kite/plugin/rust-ranking"
+bash install.sh
 ```
 
-Keep the checkout in place while using that link. If the destination already exists, stop and inspect it instead of forcing replacement.
+From a release archive, extract it first and run that command inside its `kite-<version>` directory. The archive contains the compiled helper. From a Git checkout, the installer downloads the matching release helper automatically, checks its source identity, architecture, size and SHA-256, and installs its license notices.
 
-Keep the package basename `rust-ranking`. Do not overwrite an existing package/link. If the marketplace owns that ID, use its normal uninstall/update workflow instead.
+The installer registers the engine for KITE but does not run it, change your engine preference, or override plugin permissions. Existing configuration and custom/marketplace packages are preserved.
 
-In your normal `config.yaml`:
+## Select Rust
+
+Close KITE. In `~/.config/kite/config.yaml`, merge:
 
 ```yaml
 ranking:
   engine: rust-ranking
-plugins:
-  rust-ranking:
-    enabled: true
 ```
 
-The manager must also allow the plugin in KITE. A YAML disable always wins. Restart KITE after changing settings or manually rebuilding/replacing code. Nothing is installed, selected or enabled automatically by these instructions.
+Reopen KITE. If you previously disabled that package, use **Plugin marketplace → Installed → Options → Allow in KITE**; an explicit YAML disable still wins. No compile command is needed.
 
-To return to the unchanged default:
+To return to Python search:
 
 ```yaml
 ranking:
   engine: builtin
 ```
 
-Missing/disabled plugins and worker failures use the built-in policy. Runtime failure disables the external ranker for that launcher session; refresh the package or restart to retry. If cleanup is unconfirmed, use the marketplace's normal cleanup/recovery flow; do not delete ownership records.
+Python remains the default and runtime fallback. Missing, disabled or failed native engines fall back to it; refresh/restart after fixing setup to retry.
 
-## Behavior
+## Existing development or marketplace installs
 
-- Exact/prefix/word/subsequence matching plus bounded native typo correction; for example `firefoc` can find Firefox. High sensitivity removes typo-only hits.
-- Accent and selected-letter folding, aliases, learned-query boosts, decaying usage, stable kind/title/ID tie breaks, and empty-query favorites.
-- Empty queries prioritize Favorites → commands/plugins → Applications **before** applying the global result limit, so a large app catalog cannot crowd enabled plugins out of their section. Typed-query matching and ordering are unchanged.
-- Keywords admit a candidate but cannot lift it above a stronger visible-title match.
-- This is **not** oma-cast's complete ranking policy. Only its explicitly MIT-licensed matcher is reused; the JavaScript policy was not ported. Some ordering/matching differs from both original oma-cast and KITE's Python scorer.
-- KITE supplies root app/command candidates only. Clipboard, secret-store entries, provider results and action payloads are not put into this ranking catalog. As with every plugin, initialization provides copied configuration/environment: only run code you trust.
+If an earlier guide had you create your own `rust-ranking` link, the installer leaves it alone rather than taking over your package. That override continues to take precedence.
 
-The process is reused across root queries, caches normalized candidate text, and speaks [KITE's plugin RPC](../../docs/plugin-protocol.md) directly. The host sends a validated catalog once per revision/process, followed by small query/options requests. The compiled binary is a persistent direct child (`execution: child`), not a systemd unit or Rust binding; exec-only Linux launch utilities leave no helper process behind. Work is synchronous: cancellation notifications are consumed between requests, while KITE rejects stale responses and enforces cancellation/time/resource limits. No usage is written by the plugin.
+To adopt the bundled engine, close KITE and remove only your own old development link after verifying its target, then rerun the installer. For a manager-owned package, use its normal uninstall/update flow instead. Never force-replace an unknown link or delete ownership records.
 
-## Verify
+## Requirements and behavior
 
-From KITE's project root after building:
+- Use the release for your CPU architecture. The installer checks the recorded glibc requirement; unsupported systems can install Python-only with `bash install.sh --python-only`.
+- Native execution uses Linux `setpriv`, `flock`, `prlimit` and `sh`, with a persistent direct child—not a systemd ranking unit or Rust binding.
+- Flea matching supports typos and accent folding. KITE adds aliases, learned-query boosts, usage decay, favorites and stable ordering. Empty-query commands/plugins remain ahead of apps before the result limit.
+- This is not a port of oma-cast's unlicensed JavaScript policy. [Matcher license/provenance](PROVENANCE.md) is preserved, and third-party runtime notices accompany the binary.
+- Only trusted code should be selected: initialization supplies configuration/environment, and root ranking supplies app/command metadata and usage. Tool contents and secret-store entries are not ranking candidates.
 
-```sh
-QT_QPA_PLATFORM=offscreen PYTHONDONTWRITEBYTECODE=1 uv run --locked --no-sync python -m tests.check_rust_ranking
-```
+## Developers
 
-This uses synthetic rows and temporary config/state, checks shared KITE ordering cases, native typo/folding behavior, malformed/oversized RPC recovery, catalog reloads, and a persistent contained worker with cleanup. It does not change your settings or activate real applications. The Qt integration needs an unprivileged Linux user and `setpriv`, `flock`, `prlimit`, and `sh`, not a systemd ranking unit. Direct execution forbids threads/subprocesses and bounds virtual address space; other plugin types remain systemd-supervised. Run `uv run --locked --no-sync python -m tests.check_direct_ranking` to check limits, owner-death/lease handling and hung-child cleanup. Add `--skip-qt` for direct RPC/policy checks only.
-
-These are correctness checks, not a measured speedup claim. Real-desktop keystroke-to-paint latency has not been verified; synthetic host-path benchmark results must not be presented as UI timings.
+Only maintainers/contributors need to build Rust. See [development setup](../../docs/development.md#build-and-test-the-optional-rust-engine) and [release publishing](../../docs/releases.md). The public executable uses KITE's [shared protocol](../../docs/plugin-protocol.md), including cached catalogs and query-only updates.

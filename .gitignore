@@ -231,6 +231,9 @@ __marimo__/
 /usage.json
 /favorites.sqlite*
 /kite.zip
+/native/
+/native-assets.json
+/.native-backups/
 
 # The website is a separate, paused project.
 /website/

@@ -37,6 +37,7 @@ This separation is practical, not a claim that the entire core has no Qt imports
 | `~/.local/state/kite/usage.json` | Local launch usage and learned search terms |
 | `~/.local/state/kite/favorites.sqlite` | Ordered favorites |
 | `~/.cache/kite/applications.json` | Disposable application metadata cache; honors `XDG_CACHE_HOME` |
+| `~/.local/share/kite/native/rust-ranking/` | Installer-verified first-party native engine and notices |
 | `~/.config/kite/plugin/<id>/` | User-authored packages, discovered directly |
 | `~/.local/share/kite/plugins/<id>/` | Installed trusted packages; development links are supported |
 | `main/bundled_plugins/` | Shipped clipboard, emoji and web plugins |
@@ -270,7 +271,7 @@ This picker is independent of normal single-instance IPC and does not turn choic
 
 `pyproject.toml` declares runtime dependencies; `uv.lock` pins their resolution. `.venv/` is generated using system Python and system site-packages so existing PyGObject/Gio bindings remain available.
 
-`install.sh` supports a local checkout or an explicit remote Git URL. It installs the user command, desktop entry and icon sizes, preserves configuration/plugins/state, and does not install system packages or enable examples. See [installation instructions](../README.md#setup-with-uv).
+`install.sh` supports a local checkout or an explicit remote Git URL. It installs the user command, desktop entry and icon sizes, preserves configuration/plugins/state, and does not install system packages or enable examples. Its trusted native hook verifies a precompiled release against version/source/architecture/hash metadata and registers it without running it or changing the selected engine. User-authored/managed overrides and explicit disables win; `--python-only` skips native fetching. This is a first-party core component, not a marketplace execution hook. See [release verification](releases.md). See [installation instructions](../README.md#setup-with-uv).
 
 ## Reference material
 

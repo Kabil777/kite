@@ -58,14 +58,14 @@ def installer_link():
         config.write_text('# preserve fixture settings\n')
         env = dict(os.environ, HOME=str(root / 'home'), XDG_DATA_HOME=str(root / 'data'),
                    XDG_CONFIG_HOME=str(root / 'config'), PATH=str(tools) + ':' + os.environ['PATH'])
-        result = subprocess.run(['bash', str(ROOT / 'install.sh')],
+        result = subprocess.run(['bash', str(ROOT / 'install.sh'), '--python-only'],
                                 env=env, capture_output=True, text=True, timeout=30)
         assert result.returncode == 0, result.stderr
         assert not list((app / 'plugins').iterdir()), 'Default installation installed an external plugin'
         assert not (app / 'examples/gopass').exists(), 'Default installation bundled the Gopass package'
         installed = app / 'plugins/node-tool'; installed.mkdir()
         (installed / 'custom.py').write_text('fixture-owned plugin change')
-        result = subprocess.run(['bash', str(ROOT / 'install.sh'), '--link-example', 'node-tool'],
+        result = subprocess.run(['bash', str(ROOT / 'install.sh'), '--python-only', '--link-example', 'node-tool'],
                                 env=env, capture_output=True, text=True, timeout=30)
         assert result.returncode == 0, result.stderr
         assert installed.is_symlink() and installed.resolve() == ROOT / 'examples/node-tool'

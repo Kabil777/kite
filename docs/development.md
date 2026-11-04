@@ -42,6 +42,7 @@ uv run --locked --no-sync python -m tests.check_app_launch
 uv run --locked --no-sync python -m tests.check_clipboard_repeat
 uv run --locked --no-sync python -m tests.check_ranking
 uv run --locked --no-sync python -m tests.check_plugin_manager
+uv run --locked --no-sync python -m tests.check_native_release
 uv run --locked --no-sync python -m tests.check_docs
 ```
 
@@ -58,6 +59,8 @@ uv run --locked --no-sync python -m tests.check_direct_ranking
 Supervised-worker checks require a working systemd user manager and cgroup v2; multilingual execution also needs Node.js. The direct-child check needs the Linux launch utilities described in the [protocol guide](plugin-protocol.md#cancellation-lifecycle-and-trust). A skipped or unavailable environment is not a passing lifecycle test.
 
 ## Build and test the optional Rust engine
+
+This is a **contributor-only** build. End users get the precompiled engine through `install.sh`; they do not need Cargo. See [release publishing](releases.md).
 
 From the KITE checkout root:
 

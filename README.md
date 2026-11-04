@@ -30,7 +30,9 @@ cd kite
 bash install.sh
 ```
 
-Run the installer as your normal user, **not with sudo**. It creates the Python environment, `~/.local/bin/kite` and a desktop-menu entry. Existing settings and installed plugins are preserved.
+Run the installer as your normal user, **not with sudo**. It creates the Python environment, `~/.local/bin/kite` and a desktop-menu entry. It downloads and verifies the matching **precompiled Rust helper**—no Cargo or Rust compiler needed. Existing settings and plugin overrides are preserved.
+
+You can also download a matching [application release archive](https://github.com/Kabil777/kite/releases/latest), extract it and run `bash install.sh` inside; its native helper is already included. For unsupported/offline native setups, use `bash install.sh --python-only`.
 
 ### 3. Open it
 
@@ -50,10 +52,10 @@ Bind `~/.local/bin/kite` to your preferred shortcut in your desktop's keyboard s
 | Copy on X11 | `xclip`, or text-only `xsel` |
 | Clipboard history | Separately install [cliphist and its watcher](docs/clipboard.md#clipboard-history-is-separate); it is not included by default |
 | Window switching | The [helper for your desktop](docs/desktop.md) |
-| Rust search | Follow the [optional Rust setup](examples/rust-ranking/HOWTO.md); Python search is the default |
+| Rust search | Precompiled helper included on supported Linux x86-64/ARM64; [select the engine](examples/rust-ranking/HOWTO.md) |
 | Extra plugins | Browse the [plugin registry](https://github.com/Kabil777/kite_plugins) and follow the plugin's README |
 
-**No external plugin is installed by default.** For example, [Passwords/Gopass](https://github.com/Kabil777/kite_plugins/tree/main/plugins/gopass) is a separate, opt-in package—not part of the KITE installation.
+**Third-party tool plugins are opt-in.** For example, [Passwords/Gopass](https://github.com/Kabil777/kite_plugins/tree/main/plugins/gopass) is a separate, opt-in package—not part of the KITE installation.
 
 To browse marketplace releases, use **Plugin marketplace → Configure** with:
 

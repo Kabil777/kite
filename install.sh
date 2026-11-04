@@ -5,12 +5,14 @@ set -euo pipefail
 fail() { printf 'KITE: %s\n' "$*" >&2; exit 1; }
 repo=''
 link_examples=()
+python_only=false
 while (($#)); do
     case "$1" in
         --repo) repo=${2:?--repo requires a Git URL}; shift 2 ;;
+        --python-only) python_only=true; shift ;;
         --link-example) link_examples+=("${2:?--link-example requires an example ID}"); shift 2 ;;
         -h|--help)
-            printf 'Usage: bash install.sh [--repo HTTPS_OR_SSH_GIT_URL] [--link-example ID]\n'
+            printf 'Usage: bash install.sh [--repo HTTPS_OR_SSH_GIT_URL] [--python-only] [--link-example ID]\n'
             exit 0 ;;
         *) fail "Unknown argument: $1" ;;
     esac
@@ -55,7 +57,8 @@ if [[ "$source_dir" != "$app" ]]; then
     tar -C "$source_dir" --exclude='./.git' --exclude='./.venv' \
         --exclude='./plugins' --exclude='./plugin-packages' --exclude='./.plugin-staging' \
         --exclude='./plugin-backups' --exclude='./.plugin-backup.*' \
-        --exclude='./.memsearch' --exclude='__pycache__' -cf - . \
+        --exclude='./.memsearch' --exclude='./.ruff_cache' --exclude='./native' --exclude='./native-assets.json' \
+        --exclude='./.native-backups' --exclude='target' --exclude='__pycache__' -cf - . \
         | tar -C "$app" -xf -
 fi
 mkdir -p "$app/plugins"
@@ -88,9 +91,14 @@ fi
 if [[ ! -x "$app/.venv/bin/python" ]]; then
     uv venv --python "$python" --system-site-packages "$app/.venv"
 fi
-uv sync --project "$app" --locked --python "$python"
+uv sync --project "$app" --locked --compile-bytecode --python "$python"
 "$app/.venv/bin/python" -c 'from gi.repository import Gio' \
     || fail 'Install system PyGObject/Gio and create .venv using uv venv --system-site-packages'
+
+if [[ "$python_only" == false ]]; then
+    (cd -- "$app" && "$app/.venv/bin/python" -B -m main.native_release --source "$source_dir" --app "$app") \
+        || fail 'Prebuilt native setup did not finish. Review the error or use --python-only to skip it.'
+fi
 
 printf '#!/usr/bin/env bash\nunset QT_QPA_PLATFORM_PLUGIN_PATH QT_PLUGIN_PATH\nexport LC_ALL=C.UTF-8\nexec %q %q "$@"\n' \
     "$app/.venv/bin/python" "$app/main.py" > "$bin/kite"
