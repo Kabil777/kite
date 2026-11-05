@@ -75,6 +75,10 @@ The actual config and desktop environment are provided, as with Python plugins; 
 - `search`: `params: {"query":"text"}`. Return a `view` envelope.
 - `handle_event`: `params: {"event":{"node_id":"id","name":"activate","payload":{}}}`. Other event names are `submit`, `change`, `filter`; payload includes the current query and applicable form inputs. Return a view, or a toast to preserve the screen.
 
+Typed `configuration` metadata, session option snapshots and optional passive result previews work identically for executable and Python tools. See the [settings contract](plugin-settings.md) and [image detail surface](frontend.md#selection-driven-image-detail). New optional catalog fields are `settings_keys`, `option_keys` (JSON arrays) and `primary_label`; a result may include `preview` with a standard passive `image_preview` node. Old backends may omit these fields. No initialization keys, RPC methods, ranking contract or wire major changes are introduced.
+
+For opted-in catalogs, the host adds validated current values under `event.payload.settings`. Selection itself does not send an activation request. A backend must revalidate values/resource identity before acting; neither settings changes nor preview selection authorize desktop changes. Saved configuration reaches a newly initialized affected session; it is not pushed silently into an old initialization snapshot.
+
 A result response:
 
 ```json

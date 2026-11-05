@@ -1,18 +1,15 @@
 """Trusted marketplace controller using the launcher's lists, filters, forms and Actions."""
 from concurrent.futures import ThreadPoolExecutor
-import os
 from pathlib import Path
-import stat
-import tempfile
 from threading import Event
 import time
-import yaml
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal, Slot
 from .core import Result
-from .frontend import input_values, render_nodes
+from .frontend import clear_layout, input_values, render_nodes
 from .frontend.widgets import plugin_icon
 from .plugin_api import API_VERSION, Catalog, Node, Toast
+from .frontend.settings import SettingsFields
 from .plugin_manager import Manager, ManagerError, read_guide
 
 WARNING = ('Plugins run with your full user permissions, including access to files, secrets and network. '
@@ -39,6 +36,9 @@ class Marketplace(QObject):
         self.status, self.error = 'Installed packages are inspected without executing them.', ''
         self.manual_key, self.manual_text = '', ''
         self.config_fields = []
+        self.config_initial, self.config_draft = {}, None
+        self.requested_settings = None
+        self.settings_origin = False
         self.finished.connect(self.completed, Qt.ConnectionType.QueuedConnection)
         self.cleanup_timer = QTimer(self)
         self.cleanup_timer.setInterval(25)
@@ -139,23 +139,11 @@ class Marketplace(QObject):
                 'description': WARNING, 'error': self.error or unavailable, 'submit_text': 'Approve update' if update else 'Approve install'
             }, children=tuple(fields), events={'submit': {}} if writable else {}),)
         elif self.page == 'plugin_config' and row:
-            values = host.cfg.get('plugins', {}).get(row['id'], {}).get('config', {})
-            fields = []
-            for item in self.config_fields:
-                key = item['key']
-                value = values.get(key, item.get('default', item.get('options', [''])[0]))
-                if item['type'] == 'choice' and value not in item['options']:
-                    value = item.get('default', item['options'][0])
-                if item['type'] == 'text' and not isinstance(value, str):
-                    value = str(value)
-                fields.append(Node('label', 'config-label-' + key, {'text': item['label']}))
-                if item['type'] == 'choice':
-                    fields.append(Node('select', 'config-' + key, {'options': item['options'], 'value': value}))
-                else:
-                    fields.append(Node('text_input', 'config-' + key, {'text': value, 'placeholder': item.get('placeholder', '')}))
+            values = self.config_draft if self.config_draft is not None else host.cfg.get('plugins', {}).get(row['id'], {}).get('config', {})
+
             nodes = (Node('form', 'marketplace-plugin-config', {
                 'title': row['name'] + ' settings', 'description': '',
-                'error': self.error or unavailable, 'submit_text': 'Save configuration'}, children=tuple(fields),
+                'error': unavailable, 'submit_text': 'Save configuration'}, children=(),
                 events={'submit': {}} if writable else {}),)
         elif self.page == 'uninstall' and row:
             nodes = (Node('form', 'marketplace-uninstall', {
@@ -186,8 +174,14 @@ class Marketplace(QObject):
             self.nodes = nodes
             render_nodes(host.plugin_detail_layout, nodes, lambda event: host.plugin_event('marketplace', event), host.cfg)
             form = host.active_form()
+            if form and self.page == 'plugin_config':
+                editor = SettingsFields(self.config_fields, values, form.fields)
+                form.fields_layout.addWidget(editor)
+                editor.changed.connect(form.mark_dirty)
             if form and form.objectName() == form_id:
                 form.dirty = dirty
+        if self.page == 'plugin_config' and host.active_form():
+            host.active_form().set_error(self.error or unavailable)
         host.plugin_detail_panel.show()
 
     def primary_title(self):
@@ -253,9 +247,11 @@ class Marketplace(QObject):
 
     def configure_plugin(self):
         row = self.selected()
-        if not row or self.tab != 'Installed' or self.busy:
-            return
-        if not self.launcher.confirm_form_leave(self.configure_plugin):
+        if row and self.tab == 'Installed' and not self.busy:
+            self.open_settings(row)
+
+    def open_settings(self, row):
+        if not self.launcher.confirm_form_leave(lambda: self.open_settings(row)):
             return
         try:
             from .plugin_api import _read_manifest
@@ -267,6 +263,8 @@ class Marketplace(QObject):
                 return
             self.error = ''
             self.target = dict(row)
+            self.config_initial = dict(self.launcher.cfg.get('plugins', {}).get(row['id'], {}).get('config', {}))
+            self.config_draft = None
             self.page = 'plugin_config'
             self.publish()
         except (OSError, ValueError) as error:
@@ -285,43 +283,16 @@ class Marketplace(QObject):
         if event.node_id == 'marketplace-plugin-config':
             row = self.selected()
             if row:
-                configured = input_values(self.launcher.plugin_detail_panel)
-                values = {item['key']: configured['config-' + item['key']] for item in self.config_fields}
-                def save():
-                    path = self.launcher.config_path
-                    if path.is_symlink():
-                        raise ValueError('Refusing to replace a symlinked config.yaml')
-                    current = yaml.safe_load(path.read_text()) if path.exists() else {}
-                    current = current or {}
-                    if not isinstance(current, dict):
-                        raise ValueError('KITE configuration must be a mapping')
-                    plugins = current.setdefault('plugins', {})
-                    if not isinstance(plugins, dict):
-                        raise ValueError('plugins configuration must be a mapping')
-                    plugin = plugins.setdefault(row['id'], {})
-                    if not isinstance(plugin, dict):
-                        raise ValueError('plugin configuration must be a mapping')
-                    config = plugin.setdefault('config', {})
-                    if not isinstance(config, dict):
-                        raise ValueError('plugin config must be a mapping')
-                    config.update(values)
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o600
-                    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix='.config-')
-                    try:
-                        with os.fdopen(fd, 'w') as stream:
-                            yaml.safe_dump(current, stream, sort_keys=False, allow_unicode=True)
-                        os.chmod(temporary, mode)
-                        os.replace(temporary, path)
-                    finally:
-                        if os.path.exists(temporary):
-                            os.unlink(temporary)
-                    return values
-                def saved(_):
-                    self.launcher.cfg['plugins'].setdefault(row['id'], {}).setdefault('config', {}).update(values)
-                    self.error = ''
-                    self.list_page('Saved plugin configuration.')
-                self.run('Saving plugin configuration…', save, saved, committing=True)
+                editor = self.launcher.plugin_detail_panel.findChild(SettingsFields)
+                try:
+                    values = editor.values()
+                except ValueError as error:
+                    self.launcher.active_form().set_error(str(error)[:512])
+                    self.launcher.show_toast(Toast('Check settings', str(error)[:512], 'error'))
+                    return
+                self.config_draft = values
+                self.save_values(row['id'], self.config_fields, values, self.config_initial,
+                                 self.settings_saved)
         elif event.node_id == 'marketplace-source':
             source = input_values(self.launcher.plugin_detail_panel).get('catalog-url', '').strip()
             self.source_draft = source
@@ -347,6 +318,30 @@ class Marketplace(QObject):
                 identifier = row['id']
                 self.quiesce(lambda: self.manager.uninstall(identifier, self.launcher.package_lease),
                              lambda result: self.mutated(identifier, result))
+
+    def settings_saved(self):
+        origin, self.settings_origin = self.settings_origin, False
+        self.list_page('Saved plugin configuration.')
+        if origin:
+            self.launcher.back()
+
+    def save_values(self, identifier, fields, values, expected, success=None):
+        from .plugin_settings_store import save_settings
+        def saved(result):
+            self.launcher.cfg['plugins'].setdefault(identifier, {}).setdefault('config', {}).update(result)
+            try:
+                self.launcher.plugin_settings_changed(identifier)
+            except (OSError, ValueError, RuntimeError) as error:
+                toast = Toast('Saved; reload needed', str(error)[:512], 'error')
+            else:
+                toast = Toast('Settings saved', tone='success')
+            self.error = ''
+            if success:
+                success()
+            self.launcher.show_toast(toast)
+        self.run('Saving plugin configuration…',
+                 lambda: save_settings(self.launcher.config_path, identifier, fields, values, expected),
+                 saved, committing=True)
 
     def run(self, message, work, success=None, committing=False, discard_preview=False):
         if self.busy:
@@ -393,8 +388,12 @@ class Marketplace(QObject):
                 if callback:
                     QTimer.singleShot(0, callback)
         self.publish()
+        self.launcher.update_busy()
 
     def list_page(self, message=''):
+        clear_layout(self.launcher.plugin_detail_layout)
+        self.nodes = None
+        self.config_draft = None
         self.page, self.source_draft, self.target = 'list', None, None
         if message:
             self.status = message
@@ -410,6 +409,12 @@ class Marketplace(QObject):
                        'Installed packages. Enter reviews a managed update; Actions includes enable, disable and uninstall.' if self.installed_rows else
                        'No external packages installed. Choose Configure to set a reviewed catalog source.')
             self.list_page(message)
+            requested, self.requested_settings = self.requested_settings, None
+            if requested and self.launcher.mode == 'marketplace':
+                row = next((item for item in self.installed_rows if item['id'] == requested), None)
+                if row:
+                    self.settings_origin = True
+                    self.open_settings(row)
         self.run('Reading installed metadata…', lambda: (self.manager.inventory(), self.manager.registry()), loaded)
 
     def show_browse(self):

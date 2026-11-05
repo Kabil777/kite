@@ -22,7 +22,8 @@ plugin_root = _api.plugin_root
 unavailable_service = _api.unavailable_service
 validate_view = _api.validate_view
 validate_toast = _api.validate_toast
+validate_settings = _api.validate_settings
 
 __all__ = ['API_VERSION', 'Action', 'Catalog', 'Event', 'HostServices', 'MenuAction', 'Node',
            'Plugin', 'Result', 'Toast', 'View', 'load_plugins', 'plugin_config',
-           'plugin_root', 'user_plugin_root', 'discover_plugins', 'unavailable_service', 'validate_view', 'validate_toast']
+           'plugin_root', 'user_plugin_root', 'discover_plugins', 'unavailable_service', 'validate_view', 'validate_toast', 'validate_settings']

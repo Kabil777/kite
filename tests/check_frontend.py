@@ -64,10 +64,10 @@ def check_frontend(app):
         app.processEvents()
         assert preview.set_source(str(source), 'Red rectangle')
         assert preview.accessibleName() == 'Red rectangle'
-        assert preview.pixmap().width() == 192 and preview.pixmap().height() == 96
+        assert preview.pixmap().deviceIndependentSize().width() == 192 and preview.pixmap().deviceIndependentSize().height() == 96
         preview.resize(120, 200)
         app.processEvents()
-        assert preview.pixmap().width() == 96 and preview.pixmap().height() == 48
+        assert preview.pixmap().deviceIndependentSize().width() == 96 and preview.pixmap().deviceIndependentSize().height() == 48
         assert not preview.set_source(str(root / 'missing.png'))
         assert preview.pixmap().isNull() and preview.text() == 'Image preview unavailable'
         assert not preview.set_data(b'not an image')

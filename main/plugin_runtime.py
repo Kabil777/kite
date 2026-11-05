@@ -129,6 +129,17 @@ class Runtime(QObject):
         if self.active:
             self.active.cancel()
 
+    def invalidate(self, identifier):
+        if self.pending and self.pending[0].plugin_id == identifier:
+            self.pending[0].cancelled.set()
+            self.pending = None
+        for session in tuple(self.sessions):
+            if session.plugin_id == identifier:
+                if self.active is session:
+                    self.active = None
+                session.retire()
+        self.notify_idle()
+
     def deactivate(self):
         if self.pending:
             self.pending[0].cancelled.set()

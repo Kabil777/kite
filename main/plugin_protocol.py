@@ -185,6 +185,7 @@ def from_wire(value):
         for raw in _array(values.get('results', []), 5000):
             item = _values(Result, raw)
             item['action'] = _action(item.get('action'))
+            item['preview'] = node(item['preview']) if item.get('preview') is not None else None
             results.append(Result(**item))
         for raw in _array(values.get('actions', []), 32):
             item = _values(MenuAction, raw)
@@ -194,6 +195,8 @@ def from_wire(value):
         if values.get('catalog') is not None:
             catalog = _values(Catalog, values['catalog'])
             catalog['filters'] = tuple(_array(catalog.get('filters', []), 20))
+            for key in ('settings_keys', 'option_keys'):
+                catalog[key] = tuple(_array(catalog.get(key, []), 32))
             values['catalog'] = Catalog(**catalog)
         if values.get('toast') is not None:
             values['toast'] = Toast(**_values(Toast, values['toast']))

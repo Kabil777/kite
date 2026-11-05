@@ -41,6 +41,8 @@ class Form(QScrollArea):
             label.setStyleSheet(f'color: {color}; background: transparent;')
             outer.addWidget(label)
             label.setVisible(bool(props.get(key)))
+            if key == 'error':
+                self.error_label = label
         self.confirmation = QFrame()
         self.confirmation.setStyleSheet(f"QFrame {{ background: {config['colors']['search']}; border: none; }}")
         confirm_layout = QVBoxLayout(self.confirmation)
@@ -89,6 +91,10 @@ class Form(QScrollArea):
             field.activated.connect(self.mark_dirty)
         for field in self.fields.findChildren(QListWidget):
             field.itemClicked.connect(self.mark_dirty)
+
+    def set_error(self, text):
+        self.error_label.setText(text)
+        self.error_label.setVisible(bool(text))
 
     def mark_dirty(self, *_):
         self.dirty = True

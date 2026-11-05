@@ -369,6 +369,30 @@ A catalog describes the native surface, not a new window:
 | `layout` | `list`, `grid` or `list_detail` using host-owned layouts |
 | `filters` | Tuple of filter labels; changes emit `Event('catalog', 'filter', ...)` with the selected value |
 | `preserve_order` | Keep supplied order for an empty query rather than applying normal ranking |
+| `settings_keys` | Declared configuration keys rendered as compact session controls |
+| `option_keys` | Declared keys in the full Options editor; defaults to `settings_keys` |
+| `primary_label` | Host Apply/activation label for the split-detail surface |
+
+### Selection-driven image detail
+
+Add a passive image node to a result's optional `preview` field and use `layout='list_detail'`:
+
+```python
+from plugin_api import Action, Node, Result
+
+Result(
+    'image:forest', 'Forest.png', subtitle='Mountains',
+    action=Action('activate', 'image:forest'),
+    preview=Node('image_preview', 'forest-preview',
+                 {'source': '/absolute/wallpapers/Forest.png', 'alt': 'Forest'}),
+)
+```
+
+The host keeps preview metadata with the validated view/result ID. Selection loads an image, not an activation event. A click or arrow navigation previews; Enter/the primary button explicitly activates. No extra confirmation form is needed. Other catalog layouts and results omitting the descriptor retain legacy behavior.
+
+The shared image loader reads and decodes on at most two background workers, with a 64-request pending bound and 32-MiB decoded-image LRU. Preview requests take priority and obsolete selection/mode/config generations are discarded. Only the GUI thread creates QPixmaps; scaling respects device pixel ratio. Formats, local-file size (16 MiB) and pixel limits (32 million) remain enforced; SVG/referenced resources are excluded. Clipboard images use the same background loader. The low-level synchronous `ImagePreview.set_source/set_data` methods remain available for standalone callers; KITE's production node renderer supplies the shared loader.
+
+The native splitter fits within the configured launcher window. At constrained widths the detail stacks below the list and quick controls remain available through Options. Native editor keys must not be stolen by global result navigation. Settings/quick controls come from the [same field contract](plugin-settings.md); they are not plugin-specific Qt pages.
 
 ## Where the frontend code lives
 
@@ -376,7 +400,9 @@ A catalog describes the native surface, not a new window:
 | --- | --- |
 | `main/frontend/renderer.py` | Convert validated nodes into widgets and collect form values |
 | `main/frontend/markdown.py` | `MarkdownView`: documentation rendering and safe links/resources |
-| `main/frontend/image_preview.py` | `ImagePreview`: bounded image loading and scaling |
+| `main/frontend/image_preview.py`, `image_loader.py` | Bounded raster presentation, asynchronous decoding/cache and DPR-aware scaling |
+| `main/frontend/catalog_detail.py` | Shared selected-image detail, quick options and explicit defaults |
+| `main/frontend/settings.py` | Typed native editors generated from plugin configuration metadata |
 | `main/frontend/widgets.py` | Shared controls, Actions panel, type filter, icon/font helpers |
 | `main/frontend/type_label.py` | `TypeLabel`: borderless widget and shared native-row type/context painting |
 | `main/frontend/controls.py` | `TextInput` and `Button`: shared input/button appearance |

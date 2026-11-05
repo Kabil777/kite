@@ -23,7 +23,7 @@ from PySide6.QtNetwork import (QLocalServer, QLocalSocket, QNetworkAccessManager
 from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit,
                                QListWidget, QListWidgetItem, QProgressBar, QPushButton, QStyledItemDelegate, QStyle,
                                QStyleOptionViewItem, QVBoxLayout, QPlainTextEdit, QStackedWidget, QSizePolicy,
-                               QWidget)
+                               QWidget, QSplitter)
 
 from .core import APP_ROOT, CONFIG, DATA, STATE, MAX_CLIPBOARD_BYTES, Result, clipboard_command, load_config, math_like, rank, suggestions
 from .ranking import record_visit
@@ -36,6 +36,9 @@ from .dmenu import options_from_bytes
 from .plugin_api import Event as PluginEvent, Result as PluginResult, Toast, _canonical_shortcut, load_plugins, validate_toast, validate_view
 from .plugin_manager import Manager as PluginManager, UseLease, mutation_lock
 from .frontend import Form, ImagePreview, MarkdownView, ToastBanner, TypeLabel, clear_layout, input_values, render_nodes
+from .frontend.catalog_detail import CatalogDetail
+from .frontend.image_loader import ImageLoader
+from .plugin_settings import validate_values
 from .plugin_runtime import Call as PluginCall, Runtime as PluginRuntime
 from .host_services import context as plugin_context, plugin_row, rows as plugin_rows
 
@@ -252,6 +255,29 @@ class ResultDelegate(QStyledItemDelegate):
                 painter.restore()
                 return
             return super().paint(painter, option, index)
+        if self.view.property('detailCatalog'):
+            painter.save()
+            painter.setClipRect(option.rect)
+            rect = option.rect.adjusted(4, 2, -4, -2)
+            colors = self.cfg['colors']
+            if option.state & QStyle.StateFlag.State_Selected:
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(colors['selected']))
+                painter.drawRoundedRect(rect, 5, 5)
+            icon = index.data(Qt.ItemDataRole.DecorationRole)
+            if isinstance(icon, QIcon):
+                icon.paint(painter, QRect(rect.x() + 6, rect.y() + 5, 40, 40))
+            text = rect.adjusted(54, 2, -6, -2)
+            painter.setFont(self.title_font(row))
+            painter.setPen(QColor(colors['text']))
+            painter.drawText(QRect(text.x(), text.y(), text.width(), 24), Qt.AlignmentFlag.AlignVCenter,
+                             painter.fontMetrics().elidedText(row.title, Qt.TextElideMode.ElideRight, text.width()))
+            painter.setFont(pixel_font(self.cfg['results']['font_family'], 11))
+            painter.setPen(QColor(colors['muted']))
+            painter.drawText(QRect(text.x(), text.y() + 25, text.width(), 18), Qt.AlignmentFlag.AlignVCenter,
+                             painter.fontMetrics().elidedText(row.subtitle, Qt.TextElideMode.ElideRight, text.width()))
+            painter.restore()
+            return
         if row.id.startswith('emoji:') and self.view.viewMode() == QListWidget.ViewMode.IconMode:
             painter.save()
             painter.setClipRect(option.rect)
@@ -492,6 +518,9 @@ class Launcher(QWidget):
         QIcon.setThemeSearchPaths([str(path) for path in icon_dirs] + QIcon.themeSearchPaths())
         QIcon.setThemeName(config['icons']['theme'])
         QIcon.setFallbackThemeName('Adwaita')
+        self.image_loader = ImageLoader(self)
+        self.plugin_session_options = {}
+        self.catalog_preview_key = self.catalog_preview_ready = self.catalog_thumbs_key = None
         self.build_ui()
         self.toast = ToastBanner(self.cfg, self.panel)
         self.math_timer = QTimer(self)
@@ -516,6 +545,11 @@ class Launcher(QWidget):
         self.clip_preview_timer.setSingleShot(True)
         self.clip_preview_timer.timeout.connect(self.request_clip_preview)
         self.clip_preview_id = ''
+        self.catalog_preview_timer = QTimer(self)
+        self.catalog_preview_timer.setSingleShot(True)
+        self.catalog_preview_timer.timeout.connect(self.request_catalog_preview)
+        self.content_splitter.splitterMoved.connect(lambda *_: self.catalog_preview_timer.start(90) if self.catalog_detail_active() else None)
+        self.list.currentItemChanged.connect(self.catalog_selection_changed)
         self.search.textChanged.connect(self.changed)
         self.search.returnPressed.connect(self.activate)
         self.search.installEventFilter(self)
@@ -562,6 +596,26 @@ class Launcher(QWidget):
         self.plugins = {manifest['id']: (manifest, directory) for manifest, directory in self.package_manager.discover(
             self.cfg['plugins'], lambda name, error: self.plugin_errors.append(f'{name}: {error}'[:240])
             if len(self.plugin_errors) < 3 else None)}
+
+    def plugin_settings_changed(self, identifier):
+        self.plugin_session_options.pop(identifier, None)
+        if self.catalog_detail.identity and self.catalog_detail.identity[0] == identifier:
+            self.catalog_detail.identity = None
+        token = self.plugin_tokens.pop(identifier, None)
+        if token:
+            token.set()
+        self.plugin_calls.pop(identifier, None)
+        self.plugin_runtime.invalidate(identifier)
+        if self.cfg['ranking']['engine'] == identifier:
+            self.root_ranking.refresh()
+        if self.mode == 'plugin:' + identifier:
+            self.revision += 1
+            self.image_loader.cancel('preview')
+            self.image_loader.cancel('thumb')
+            self.catalog_preview_timer.stop()
+            self.catalog_preview_key = self.catalog_preview_ready = None
+            self.catalog_detail.image.setText('Reloading settings…')
+            self.request_plugin()
 
     def refresh_plugins(self, identifier=None):
         self.root_ranking.refresh()
@@ -743,9 +797,19 @@ class Launcher(QWidget):
         content_layout = QHBoxLayout(content)
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(0)
-        content_layout.addWidget(self.list, 3)
-        content_layout.addWidget(self.clip_detail_panel, 5)
-        content_layout.addWidget(self.plugin_detail_panel, 5)
+        self.catalog_detail = CatalogDetail(self.cfg)
+        self.detail_layout_active = False
+        self.catalog_detail.hide()
+        self.catalog_detail.optionsChanged.connect(self.catalog_options_changed)
+        self.catalog_detail.saveRequested.connect(self.save_catalog_defaults)
+        self.catalog_detail.settingsRequested.connect(lambda: self.open_plugin_settings())
+        self.content_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.content_splitter.setChildrenCollapsible(False)
+        for child in (self.list, self.clip_detail_panel, self.plugin_detail_panel, self.catalog_detail):
+            self.content_splitter.addWidget(child)
+        self.content_splitter.setStretchFactor(0, 1)
+        self.content_splitter.setStretchFactor(3, 2)
+        content_layout.addWidget(self.content_splitter)
         layout.addWidget(content, 1)
         self.footerbar = QFrame()
         self.footerbar.setObjectName('footerbar')
@@ -962,6 +1026,13 @@ class Launcher(QWidget):
                 self.plugin_views.pop(plugin_id, None)
                 self.extra.pop('plugin:' + plugin_id, None)
         self.rendered_plugin_view = None
+        self.image_loader.cancel('preview')
+        self.image_loader.cancel('thumb')
+        self.image_loader.cancel('nodes')
+        self.image_loader.cancel('clipboard')
+        self.catalog_preview_timer.stop()
+        self.catalog_preview_key = self.catalog_preview_ready = self.catalog_thumbs_key = None
+        self.catalog_detail.hide()
         clear_layout(self.plugin_detail_layout)
         self.mode = mode
         if mode == 'marketplace':
@@ -984,6 +1055,8 @@ class Launcher(QWidget):
         self.results_heading.setVisible(bool(heading))
         self.clip_filter.setVisible(bool(catalog and catalog.filters))
         self.clip_detail_panel.setVisible(bool(catalog and catalog.layout == 'list_detail'))
+        if mode == 'clipboard' and catalog and catalog.layout == 'list_detail':
+            self.content_splitter.setSizes([self.width() * 3 // 8, self.width() * 5 // 8, 0, 0])
         self.plugin_detail_panel.setVisible(False)
         self.clip_preview_id = ''
         self.clip_preview_timer.stop()
@@ -1138,6 +1211,7 @@ class Launcher(QWidget):
                     or any(key == 'math' or key.startswith('extension:') for key in self.jobs.running))
 
     def update_busy(self):
+        self.catalog_detail.set_busy(bool(self.plugin_calls) or bool(self.marketplace and self.marketplace.busy))
         self.loading_bar.setVisible(self.plugin_help_id is None and self.is_busy()
                                     and not (self.mode == 'root' and not self.rows))
         form = self.active_form()
@@ -1233,6 +1307,7 @@ class Launcher(QWidget):
     def render(self):
         if self.list.viewMode() == QListWidget.ViewMode.IconMode:
             self.update_emoji_grid()
+        self.list.setProperty('detailCatalog', self.catalog_detail_active())
         query = self.search.text().strip()
         aliases = {a['id']: a['alias'].strip() for a in self.cfg['aliases']}
         candidates = self.apps + self.commands if self.mode == 'root' else self.mode_rows
@@ -1276,14 +1351,14 @@ class Launcher(QWidget):
         selected = selected_item.data(Qt.ItemDataRole.UserRole + 1) if selected_item else None
         selected_id = self.navigation_selection or (selected.id if selected and self.selection_moved else None)
         self.rows = []
-        reuse = self.mode == 'root'
-        if not reuse:
-            self.list.clear()
+        reuse = self.mode == 'root' or self.catalog_detail_active()
         selected_index, first_index, position = -1, -1, 0
         updates = self.list.updatesEnabled()
         signals = self.list.blockSignals(True)
         self.list.setUpdatesEnabled(False)
         try:
+            if not reuse:
+                self.list.clear()
             for title, rows in groups:
                 rows = rows[:self.cfg['results']['limit'] - len(self.rows)]
                 if not rows:
@@ -1315,7 +1390,7 @@ class Launcher(QWidget):
                         item.setSizeHint(QSize(0, 32) if row is None else
                                          self.list.gridSize() if self.list.viewMode() == QListWidget.ViewMode.IconMode else
                                          QSize(0, max(118, self.cfg['results']['row_height']) if row.id == 'math'
-                                               else 56 if self.mode == 'clipboard' else self.cfg['results']['row_height']))
+                                               else 56 if self.mode == 'clipboard' or self.catalog_detail_active() else self.cfg['results']['row_height']))
                     item.setData(Qt.ItemDataRole.UserRole, row.id if row else None)
                     item.setData(Qt.ItemDataRole.UserRole + 1, row)
                     if row is not None:
@@ -1357,7 +1432,13 @@ class Launcher(QWidget):
         elif self.mode.startswith('plugin:'):
             plugin_id = self.mode.removeprefix('plugin:')
             view = self.plugin_views.get(plugin_id)
-            self.plugin_detail_panel.setVisible(bool(view and view.nodes))
+            self.plugin_detail_panel.setVisible(bool(view and view.nodes) and not self.catalog_detail_active())
+            if self.catalog_detail_active():
+                identifier = self.mode.removeprefix('plugin:')
+                fields = self.plugins[identifier][0].get('configuration', [])
+                stored = self.cfg['plugins'].get(identifier, {}).get('config', {})
+                values = {**validate_values(fields, stored), **self.plugin_session_options.get(identifier, {})}
+                self.catalog_detail.configure(identifier, fields, view.catalog, values)
             full_form = bool(view and view.nodes and view.nodes[0].type == 'form')
             if view is not self.rendered_plugin_view:
                 previous_form = self.active_form()
@@ -1365,8 +1446,9 @@ class Launcher(QWidget):
                 old_form_id = previous_form.objectName() if previous_form else ''
                 self.wipe_form_passwords()
                 self.pending_leave = None
+                self.image_loader.cancel('nodes')
                 render_nodes(self.plugin_detail_layout, view.nodes if view else (),
-                             lambda event: self.plugin_event(plugin_id, event), self.cfg)
+                             lambda event: self.plugin_event(plugin_id, event), self.cfg, self.image_loader)
                 self.rendered_plugin_view = view
                 form = self.active_form()
                 if form and view is not None and view.nodes:
@@ -1386,7 +1468,18 @@ class Launcher(QWidget):
             count = sum(len(rows) for _, rows in groups[1:])
             self.results_heading.setText(f'{heading} · {count}')
             self.results_heading.show()
+        detail_active = self.catalog_detail_active()
+        self.catalog_detail.setVisible(detail_active)
+        if detail_active and not self.detail_layout_active:
+            self.content_splitter.setSizes([self.width() // 3, 0, 0, self.width() * 2 // 3])
+        self.detail_layout_active = detail_active
+        if detail_active:
+            self.catalog_detail.quick_box.setVisible(self.width() >= 620 and self.catalog_detail.options.isHidden() and bool(self.catalog_detail.quick_fields))
+        self.content_splitter.setOrientation(Qt.Orientation.Vertical if self.width() < 620 and self.catalog_detail_active() else Qt.Orientation.Horizontal)
         self.list.setVisible(not full_form)
+        if self.catalog_detail_active():
+            self.queue_catalog_thumbnails()
+            self.catalog_selection_changed()
         self.search.setReadOnly(full_form or self.mode == 'marketplace' and self.marketplace.busy)
         self.plugin_detail_layout.setContentsMargins(*(0, 0, 0, 0) if full_form else (16, 12, 16, 12))
         self.plugin_detail_panel.setStyleSheet('QFrame#pluginDetailPanel { border: none; }' if full_form else '')
@@ -1415,12 +1508,129 @@ class Launcher(QWidget):
     def clip_matches(self, row):
         return self.bundled_plugins['clipboard'].matches(row.title, row.subtitle, self.clip_filter.currentText())
 
+    def catalog_detail_active(self):
+        if not self.mode.startswith('plugin:'):
+            return False
+        view = self.plugin_views.get(self.mode.removeprefix('plugin:'))
+        return bool(view and view.catalog and view.catalog.layout == 'list_detail' and
+                    (view.catalog.settings_keys or view.catalog.option_keys or any(item.preview for item in view.results)))
+
+    def catalog_preview(self, row):
+        if row is None or not self.catalog_detail_active():
+            return None
+        identifier = self.mode.removeprefix('plugin:')
+        source_id = row.id.removeprefix('plugin:' + identifier + ':')
+        return next((item.preview for item in self.plugin_views[identifier].results if item.id == source_id), None)
+
+    def catalog_selection_changed(self, *_):
+        if not self.catalog_detail_active():
+            return
+        row = self.selected_result()
+        preview = self.catalog_preview(row)
+        key = (self.mode, self.revision, row.id if row else None, preview.props['source'] if preview else None)
+        if key == self.catalog_preview_key:
+            return
+        self.catalog_preview_key, self.catalog_preview_ready = key, None
+        self.catalog_preview_timer.stop()
+        self.image_loader.cancel('preview')
+        self.catalog_detail.image.setText('Loading preview…' if preview else 'Select an image' if row is None else 'Preview unavailable')
+        self.catalog_detail.caption.setText(row.title if row else 'Add wallpaper folders through Settings.')
+        if preview:
+            self.catalog_preview_timer.start(75)
+        else:
+            self.catalog_preview_ready = key
+        self.update_primary()
+
+    def request_catalog_preview(self):
+        if not self.catalog_detail_active():
+            return
+        row = self.selected_result()
+        preview, key = self.catalog_preview(row), self.catalog_preview_key
+        if preview is None:
+            return
+        dpr = self.devicePixelRatioF()
+        target = (int(max(240, self.catalog_detail.image.width()) * dpr), int(max(180, self.catalog_detail.image.height()) * dpr))
+        def loaded(result, error):
+            if not self.catalog_detail_active() or key != self.catalog_preview_key:
+                return
+            self.catalog_preview_ready = key
+            if error:
+                self.catalog_detail.image.setText(error)
+            else:
+                image, dimensions = result
+                self.catalog_detail.image.set_image(image)
+                self.catalog_detail.caption.setText(f'{row.title} · {dimensions[0]} × {dimensions[1]}')
+            self.update_primary()
+        self.image_loader.request(preview.props['source'], target, loaded)
+
+    def queue_catalog_thumbnails(self):
+        view = self.plugin_views[self.mode.removeprefix('plugin:')]
+        key = self.mode, self.revision, id(view)
+        if key == self.catalog_thumbs_key:
+            return
+        self.catalog_thumbs_key = key
+        self.image_loader.cancel('thumb')
+        for row in self.rows:
+            preview = self.catalog_preview(row)
+            if preview is None:
+                continue
+            def loaded(result, error, identifier=row.id):
+                if error or key != self.catalog_thumbs_key or not self.catalog_detail_active():
+                    return
+                icon = QIcon(QPixmap.fromImage(result[0]))
+                for index in range(self.list.count()):
+                    item = self.list.item(index)
+                    current = item.data(Qt.ItemDataRole.UserRole + 1)
+                    if current and current.id == identifier:
+                        item.setIcon(icon)
+                        break
+            self.image_loader.request(preview.props['source'], (96, 96), loaded, 'thumb')
+
+    def catalog_option_values(self):
+        if not self.catalog_detail_active():
+            return {}
+        identifier = self.mode.removeprefix('plugin:')
+        catalog = self.catalogs[self.mode]
+        keys = catalog.option_keys or catalog.settings_keys
+        fields = [field for field in self.plugins[identifier][0].get('configuration', []) if field['key'] in keys]
+        stored = self.cfg['plugins'].get(identifier, {}).get('config', {})
+        values = {**stored, **self.plugin_session_options.get(identifier, {})}
+        editor = self.catalog_detail.editor if not self.catalog_detail.options.isHidden() else self.catalog_detail.quick
+        if editor:
+            values.update(editor.values())
+        return validate_values(fields, values)
+
+    def catalog_options_changed(self, values):
+        if self.catalog_detail_active():
+            self.plugin_session_options[self.mode.removeprefix('plugin:')] = values
+
+    def save_catalog_defaults(self):
+        if not self.catalog_detail_active() or self.plugin_calls or self.marketplace is not None and self.marketplace.busy:
+            return
+        if self.package_lease is None:
+            self.show_toast(Toast('Cannot save defaults', 'Package lease unavailable; restart KITE.', 'error'))
+            return
+        if self.marketplace is None:
+            from .plugin_manager_ui import Marketplace
+            self.marketplace = Marketplace(self)
+        identifier = self.mode.removeprefix('plugin:')
+        fields = self.plugins[identifier][0].get('configuration', [])
+        expected = dict(self.cfg['plugins'].get(identifier, {}).get('config', {}))
+        try:
+            values = self.catalog_option_values()
+        except ValueError as error:
+            self.show_toast(Toast('Check options', str(error)[:512], 'error'))
+            return
+        self.catalog_detail.set_busy(True)
+        self.marketplace.save_values(identifier, fields, values, expected)
+
     def clip_selection_changed(self, *_):
         self.update_primary()
         if self.mode != 'clipboard':
             return
         row = self.selected_result()
         self.jobs.cancel('clip-preview')
+        self.image_loader.cancel('clipboard')
         self.clip_preview_timer.stop()
         self.clip_preview_id = row.id if row else ''
         self.clip_stack.setCurrentWidget(self.clip_preview)
@@ -1465,7 +1675,16 @@ class Launcher(QWidget):
                 detail_layout.activate()
             if kind == 'Image':
                 try:
-                    self.clip_preview.set_data(base64.b64decode(preview, validate=True))
+                    data = base64.b64decode(preview, validate=True)
+                    context = self.mode, self.revision, row_id
+                    def decoded(result, error):
+                        if context != (self.mode, self.revision, self.clip_preview_id):
+                            return
+                        if error:
+                            self.clip_preview.setText('Image preview unavailable')
+                        else:
+                            self.clip_preview.set_image(result[0])
+                    self.image_loader.request(data, (1200, 900), decoded, 'clipboard')
                 except (ValueError, TypeError):
                     self.clip_preview.setText('Image preview unavailable')
 
@@ -1491,7 +1710,7 @@ class Launcher(QWidget):
     def result_clicked(self, item):
         if item.flags() & Qt.ItemFlag.ItemIsSelectable:
             self.selection_moved = True
-            if self.mode not in ('clipboard', 'marketplace'):
+            if self.mode not in ('clipboard', 'marketplace') and not self.catalog_detail_active():
                 self.activate()
 
     def selected_result(self):
@@ -1535,11 +1754,25 @@ class Launcher(QWidget):
         title = {'copy': 'Copy to Clipboard' if self.mode == 'emoji' else 'Copy Answer' if row and row.id == 'math' else 'Copy',
                  'clip': 'Copy to Clipboard', 'app': 'Open Application', 'mode': 'Open Plugin', 'focus': 'Focus Window',
                  'web': 'Search Google', 'exec': 'Run'}.get(row.kind, 'Open') if row else 'Open'
+        if self.catalog_detail_active():
+            title = self.catalogs[self.mode].primary_label or 'Apply'
         self.primary_label.setText(title)
         self.primary_button.updateGeometry()
         self.primary_button.setAccessibleName(title + ' selected result')
-        self.primary_button.setEnabled(row is not None)
+        self.primary_button.setEnabled(row is not None and (not self.catalog_detail_active() or
+                                      self.catalog_preview_ready is not None and self.catalog_preview_ready == self.catalog_preview_key and not self.plugin_calls))
         self.actions_button.setEnabled(True)
+
+    def open_plugin_settings(self, identifier=None):
+        if self.marketplace is not None and self.marketplace.busy:
+            self.show_toast(Toast('Save in progress', 'Wait for the current settings operation to finish.'))
+            return
+        identifier = identifier or self.mode.removeprefix('plugin:')
+        if self.marketplace is None:
+            from .plugin_manager_ui import Marketplace
+            self.marketplace = Marketplace(self)
+        self.marketplace.requested_settings = identifier
+        self.set_mode('marketplace')
 
     def show_actions(self):
         if self.action_menu.isVisible():
@@ -1563,6 +1796,8 @@ class Launcher(QWidget):
                 action = self.action_menu.add_action(item.title, lambda _=False, r=menu_row: self.activate_result(r),
                                                      item.glyph, _canonical_shortcut(item.shortcut))
                 action.setEnabled(plugin_id not in self.plugin_calls or item.action.type == 'back')
+        if plugin_id in self.plugins and self.plugins[plugin_id][0].get('configuration'):
+            self.action_menu.add_action('Plugin Settings', lambda: self.open_plugin_settings(plugin_id), '\uf013')
         self.action_menu.add_action('How to', self.toggle_help, '\uf059', 'Ctrl+?')
         self.action_menu.addSeparator()
         self.action_menu.add_action('Edit YAML Settings', self.open_config, '\uf013', 'Ctrl+,')
@@ -1892,8 +2127,13 @@ class Launcher(QWidget):
         entry = self.plugins.get(plugin_id)
         if entry is not None:
             self.plugin_timer.stop()
+            try:
+                settings = self.catalog_option_values() if self.catalog_detail_active() else {}
+            except ValueError as error:
+                self.show_toast(Toast('Check options', str(error)[:512], 'error'))
+                return
             event = PluginEvent(event.node_id, event.name, {**event.payload,
-                'query': self.search.text(), 'inputs': input_values(self.plugin_detail_panel)})
+                'query': self.search.text(), 'inputs': input_values(self.plugin_detail_panel), 'settings': settings})
             self.start_plugin_call(plugin_id, 'handle_event', (event,), navigation=navigation,
                                    submitted=bool(form and event.node_id == form.objectName() and event.name == 'submit'))
 
@@ -1939,6 +2179,9 @@ class Launcher(QWidget):
                             {'query': query[len(extension['prefix']):], 'version': 1}, completed)
 
     def activate(self):
+        if self.catalog_detail_active() and (self.catalog_preview_ready is None or self.catalog_preview_ready != self.catalog_preview_key or self.plugin_calls
+                                            or self.marketplace is not None and self.marketplace.busy):
+            return
         form = self.active_form()
         if form:
             form.submit_button.click()
@@ -2172,6 +2415,11 @@ class Launcher(QWidget):
         if event.type() == QEvent.Type.KeyPress:
             key = event.key()
             control = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+            focus = QApplication.focusWidget()
+            if (focus is not None and (self.plugin_detail_panel.isAncestorOf(focus) or self.catalog_detail.isAncestorOf(focus))
+                    and (key in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right)
+                         or control and key in (Qt.Key.Key_N, Qt.Key.Key_P))):
+                return False
             if self.list.viewMode() == QListWidget.ViewMode.IconMode:
                 horizontal = key in (Qt.Key.Key_Left, Qt.Key.Key_Right) and not control
                 vertical = key in (Qt.Key.Key_Up, Qt.Key.Key_Down) or control and key in (Qt.Key.Key_N, Qt.Key.Key_P)
@@ -2210,6 +2458,8 @@ class Launcher(QWidget):
             event.ignore()
             return
         self.closing_workers = True
+        self.catalog_preview_timer.stop()
+        self.image_loader.close()
         self.jobs.clear_clipboard_cache()
         self.applications.stop()
         self.apps_refresh_timer.stop()

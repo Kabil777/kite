@@ -304,7 +304,9 @@ Toast title is required (128 characters); message is optional (512 characters); 
 
 ## Plugin settings
 
-Add your plugin's settings beneath its ID in `~/.config/kite/config.yaml`:
+Declare typed fields in the manifest to get a native **Plugin Settings** page automatically—folder/file pickers and lists, switches, numbers, choices and colors. The same contract drives optional session controls in a tool's split view. See the [settings contract](plugin-settings.md) for schema, validation, migration, explicit defaults and save guarantees. Existing text/choice contracts remain supported; new types require current KITE main.
+
+For manual configuration, add your plugin's settings beneath its ID in `~/.config/kite/config.yaml`:
 
 ```yaml
 plugins:
@@ -324,9 +326,9 @@ settings = plugin_config(host, 'hello')
 greeting = settings.get('greeting', 'Hello')
 ```
 
-`plugin_config` returns `{}` when the plugin has no settings. The plugin owns defaults and validation for its keys; check types/ranges before using them. The mapping must be JSON-compatible and is capped at 16 KiB.
+`plugin_config` merges declared defaults with stored values, or returns `{}` if neither exists. Use public `validate_settings(fields, values)` for shared type/range normalization; the backend still owns cross-field and operation-specific validation. The mapping must be JSON-compatible and is capped at 16 KiB.
 
-`host.config` is a per-call copy of the validated full configuration. Do not rewrite it to persist preferences; changes to that copy do not update the user's YAML.
+`host.config` is a per-call copy of the worker's validated initialization snapshot. A successful host Settings save invalidates the affected worker so its replacement receives fresh configuration. Do not rewrite that copy to persist preferences; it does not update the user's YAML. Catalog session overrides arrive separately in `event.payload['settings']`.
 
 ## Host services
 

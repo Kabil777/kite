@@ -9,6 +9,8 @@ import re
 import sys
 from typing import Any, Callable, Literal, Protocol
 
+from .plugin_settings import validate_values as validate_settings
+
 API_VERSION = 2
 RESERVED_PLUGIN_IDS = frozenset({'root', 'apps', 'calc', 'math', 'calculator', 'clipboard',
                                  'emoji', 'files', 'windows', 'web', 'dmenu', 'marketplace'})
@@ -43,6 +45,7 @@ class Result:
     keywords: str = ''
     glyph: str = ''
     tag: str = ''
+    preview: 'Node | None' = None
 
 
 @dataclass(frozen=True)
@@ -66,6 +69,9 @@ class Catalog:
     empty: str = 'No results'
     filters: tuple[str, ...] = ()
     preserve_order: bool = False
+    settings_keys: tuple[str, ...] = ()
+    option_keys: tuple[str, ...] = ()
+    primary_label: str = ''
 
 
 @dataclass(frozen=True)
@@ -125,8 +131,8 @@ def plugin_config(host: HostServices, plugin_id: str) -> dict[str, Any]:
     for root in (user_plugin_root(), plugin_root()):
         try:
             manifest = _read_manifest(root / plugin_id)
-            values.update({item['key']: item.get('default', item.get('options', [''])[0])
-                           for item in manifest.get('configuration', [])})
+            from .plugin_settings import default
+            values.update({item['key']: default(item) for item in manifest.get('configuration', [])})
             break
         except (OSError, ValueError, IndexError):
             continue
@@ -152,7 +158,11 @@ def _read_manifest(directory: Path, config=None):
         contents = stream.read(16385)
     if len(contents) > 16384:
         raise ValueError('Plugin manifest exceeds 16 KiB')
-    data = json.loads(contents)
+    try:
+        data = json.loads(contents)
+        json.dumps(data, ensure_ascii=False).encode('utf-8')
+    except (ValueError, RecursionError, UnicodeError) as error:
+        raise ValueError('Invalid plugin manifest JSON/text encoding') from error
     if (not isinstance(data, dict) or set(data) - {'id', 'name', 'entry', 'api_version', 'glyph', 'configuration', 'command', 'role', 'execution'}
             or not isinstance(data.get('id'), str)
             or not re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', data['id']) or data['id'] != directory.name):
@@ -184,26 +194,8 @@ def _read_manifest(directory: Path, config=None):
     glyph = data.get('glyph', '')
     if not isinstance(glyph, str) or len(glyph) > 8 or any(ord(char) < 32 for char in glyph):
         raise ValueError('Plugin glyph must be at most 8 printable characters')
-    fields = data.get('configuration', [])
-    if not isinstance(fields, list) or len(fields) > 32:
-        raise ValueError('Plugin configuration must be a list of at most 32 fields')
-    keys = set()
-    for item in fields:
-        if (not isinstance(item, dict) or set(item) - {'key', 'label', 'type', 'default', 'options', 'placeholder'}
-                or not isinstance(item.get('key'), str) or not re.fullmatch(r'[a-z][a-z0-9_]{0,63}', item['key'])
-                or item['key'] in keys or not isinstance(item.get('label'), str) or not item['label'].strip()
-                or len(item['label']) > 128 or item.get('type') not in ('text', 'choice')):
-            raise ValueError('Invalid plugin configuration field')
-        keys.add(item['key'])
-        default = item.get('default', item.get('options', [''])[0])
-        if item['type'] == 'text' and (not isinstance(default, str) or len(default) > 1024):
-            raise ValueError('Text configuration defaults must be strings up to 1024 characters')
-        if item['type'] == 'choice':
-            options = item.get('options')
-            if (not isinstance(options, list) or not options or len(options) > 64
-                    or not all(isinstance(value, str) and len(value) <= 256 for value in options)
-                    or default not in options):
-                raise ValueError('Choice configuration needs bounded options and a valid default')
+    from .plugin_settings import validate_fields
+    validate_fields(data.get('configuration', []))
     if 'command' not in data and not (directory / '__init__.py').is_file():
         raise ValueError('Plugin entry __init__.py is missing')
     return data
@@ -490,6 +482,13 @@ def validate_view(view: View) -> None:
         if chord:
             shortcuts.add(chord)
         _validate_action(item.action)
+    if view.catalog is not None:
+        for keys in (view.catalog.settings_keys, view.catalog.option_keys):
+            if (not isinstance(keys, tuple) or len(keys) > 32 or len(set(keys)) != len(keys)
+                    or any(not isinstance(key, str) or not re.fullmatch(r'[a-z][a-z0-9_]{0,63}', key) for key in keys)):
+                raise ValueError('Invalid catalog settings keys')
+        if not isinstance(view.catalog.primary_label, str) or len(view.catalog.primary_label) > 128:
+            raise ValueError('Invalid catalog primary label')
     if len(view.results) > 5000:
         raise ValueError('Plugin returned too many results')
     result_ids = set()
@@ -507,6 +506,10 @@ def validate_view(view: View) -> None:
                 or not isinstance(result.accessibility_label, str) or len(result.accessibility_label) > 512
                 or not isinstance(result.tag, str) or len(result.tag) > 256):
             raise ValueError('Invalid result metadata')
+        if result.preview is not None:
+            if not isinstance(result.preview, Node) or result.preview.type != 'image_preview' or result.preview.children or result.preview.events:
+                raise ValueError('Result previews must be passive local image nodes')
+            check_node(result.preview, 1)
         if result.action is not None:
             _validate_action(result.action)
 

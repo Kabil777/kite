@@ -9,12 +9,14 @@ from PySide6.QtWidgets import QLabel, QSizePolicy
 
 MAX_IMAGE_BYTES = 16 * 1024 * 1024
 MAX_IMAGE_PIXELS = 32_000_000
+RASTER_FORMATS = frozenset({b'png', b'jpeg', b'webp', b'gif', b'bmp', b'ico', b'tiff', b'avif', b'heif'})
 
 
 class ImagePreview(QLabel):
     def __init__(self, colors, parent=None):
         super().__init__(parent)
         self._source = QPixmap()
+        self._fill_area = False
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setWordWrap(True)
         self.setTextFormat(Qt.TextFormat.PlainText)
@@ -50,10 +52,12 @@ class ImagePreview(QLabel):
         buffer.open(QIODevice.OpenModeFlag.ReadOnly)
         reader = QImageReader(buffer)
         reader.setAutoTransform(True)
+        # Reject vector handlers before querying size: referenced resources must never load.
+        if reader.format().data() not in RASTER_FORMATS:
+            self.setText('Image preview unavailable')
+            return False
         size = reader.size()
-        # SVG is excluded: a preview must not load referenced files or network resources.
-        if (reader.format().data() not in {b'png', b'jpeg', b'webp', b'gif', b'bmp', b'ico', b'tiff', b'avif', b'heif'}
-                or not size.isValid() or size.width() * size.height() > MAX_IMAGE_PIXELS
+        if (not size.isValid() or size.width() * size.height() > MAX_IMAGE_PIXELS
                 or max(size.width(), size.height()) > 32768):
             self.setText('Image preview unavailable')
             return False
@@ -64,6 +68,11 @@ class ImagePreview(QLabel):
         self._source = QPixmap.fromImage(image)
         self._fit()
         return True
+
+    def set_image(self, image):
+        self._source = QPixmap.fromImage(image)
+        self._fill_area = True
+        self._fit()
 
     def setPixmap(self, pixmap):
         # Host-generated color swatches keep QLabel's unscaled behavior.
@@ -78,9 +87,12 @@ class ImagePreview(QLabel):
         if self._source.isNull():
             super().setPixmap(QPixmap())
             return
-        bounds = QSize(max(1, self.width() * 8 // 10), max(1, self.height() * 8 // 10))
-        super().setPixmap(self._source.scaled(bounds, Qt.AspectRatioMode.KeepAspectRatio,
-                                            Qt.TransformationMode.SmoothTransformation))
+        fraction = 1.0 if self._fill_area else .8
+        dpr = self.devicePixelRatioF()
+        bounds = QSize(max(1, int(self.width() * fraction * dpr)), max(1, int(self.height() * fraction * dpr)))
+        pixmap = self._source.scaled(bounds, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        pixmap.setDevicePixelRatio(dpr)
+        super().setPixmap(pixmap)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

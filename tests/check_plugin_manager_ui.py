@@ -143,8 +143,7 @@ def check():
             window.back()
             yield 'back navigation', lambda: window.mode == 'root'
             assert window.search.text() == 'marketplace'
-            password_row = next(row for row in window.commands if row.id == 'plugin:gopass')
-            assert password_row.icon == mascot and not password_row.glyph
+            assert all(row.id != 'plugin:gopass' for row in window.commands), 'Disabled tools stay out of root commands'
             assert all(request['kind'] == 'apps' for request in requests)
 
         steps = scenario()
@@ -165,7 +164,7 @@ def check():
             except BaseException as error:
                 state['error'] = error
                 driver.stop()
-                app.quit()
+                app.exit(1)
         driver.timeout.connect(advance)
         window.show()  # Offscreen only: no desktop window or display connection.
         driver.start()

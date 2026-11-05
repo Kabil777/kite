@@ -1,4 +1,6 @@
 """Host renderer for the small declarative plugin UI vocabulary."""
+from weakref import ref
+from shiboken6 import isValid
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLabel, QLineEdit,
@@ -22,6 +24,7 @@ def clear_layout(layout):
             # Keep retired controls out of this panel without creating top-level windows.
             parent = layout.parentWidget()
             widget.hide()
+            widget.setProperty('retired', True)
             widget.setParent(parent.window() if parent is not None else None)
             widget.deleteLater()
         elif child:
@@ -36,7 +39,7 @@ def input_values(parent):
     return values
 
 
-def render_nodes(layout, nodes: tuple[Node, ...], dispatch, config):
+def render_nodes(layout, nodes: tuple[Node, ...], dispatch, config, image_loader=None):
     focused = QApplication.focusWidget()
     focus_id = focused.objectName() if focused else ''
     position = focused.cursorPosition() if isinstance(focused, QLineEdit) else None
@@ -50,12 +53,12 @@ def render_nodes(layout, nodes: tuple[Node, ...], dispatch, config):
             child_layout.setContentsMargins(0, 0, 0, 0)
             child_layout.setSpacing(int(node.props.get('spacing', 8)))
             layout.addWidget(widget)
-            render_nodes(child_layout, node.children, dispatch, config)
+            render_nodes(child_layout, node.children, dispatch, config, image_loader)
             continue
         props = node.props
         if node.type == 'form':
             widget = Form(props, config)
-            render_nodes(widget.fields_layout, node.children, dispatch, config)
+            render_nodes(widget.fields_layout, node.children, dispatch, config, image_loader)
             widget.bind_fields('submit' in node.events)
             widget.submitted.connect(lambda n=node: dispatch(Event(n.id, 'submit', n.events.get('submit', {}))))
             widget.backRequested.connect(lambda n=node: dispatch(Event(n.id, 'back', {})))
@@ -81,7 +84,21 @@ def render_nodes(layout, nodes: tuple[Node, ...], dispatch, config):
         elif node.type == 'image_preview':
             widget = ImagePreview(config['colors'])
             widget.setMinimumHeight(160)
-            widget.set_source(props['source'], props.get('alt', ''))
+            if image_loader is None:
+                widget.set_source(props['source'], props.get('alt', ''))
+            else:
+                widget.setText('Loading preview…')
+                def loaded(result, error, target=ref(widget)):
+                    current = target()
+                    if current is None or not isValid(current):
+                        return
+                    ancestor = current
+                    while ancestor is not None:
+                        if ancestor.property('retired'):
+                            return
+                        ancestor = ancestor.parentWidget()
+                    current.setText(error) if error else current.set_image(result[0])
+                image_loader.request(props['source'], (1600, 1200), loaded, 'nodes')
         elif node.type == 'button':
             widget = Button(str(props.get('text', '')), config, props.get('variant', 'secondary'))
             widget.setEnabled('activate' in node.events)

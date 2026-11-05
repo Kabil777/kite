@@ -33,6 +33,12 @@ The complete reference is [main/defaults.yaml](../main/defaults.yaml). Keep a ba
 
 Dimensions and font sizes use logical pixels. Fonts and icon themes are optional preferences, not extra Python dependencies. An installed [Nerd Font](https://www.nerdfonts.com/font-downloads) improves symbol coverage; KITE uses native fallbacks when unavailable. It does not install fonts or themes automatically.
 
+## Plugin settings without YAML
+
+Use **Plugin marketplace → Installed → select a plugin → Options → Settings**, or **Plugin Settings** in an active tool's Actions. The plugin's declared contract supplies native fields: Browse for folders/files, editable lists, switches, numbers and choices. Save applies only that plugin's preferences; an error keeps your draft editable. No plugin code runs merely to build its Settings page.
+
+Some tools offer quick controls beside a preview. Those edits are temporary until you choose **Save defaults**; **Reset** restores the tool's declared defaults in the session. Check the plugin's guide for its specific options. Authors can read the [settings contract](plugin-settings.md).
+
 ## Favorites and aliases
 
 Use **Actions → Add to Favorites** for an app/tool; the same menu can remove or reorder it. Favorites are stored separately from appearance settings.
