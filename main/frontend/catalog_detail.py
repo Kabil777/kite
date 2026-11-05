@@ -69,6 +69,7 @@ class CatalogDetail(QFrame):
         self.option_fields = [field for field in fields if field['key'] in keys]
         self.quick_fields = [field for field in fields if field['key'] in catalog.settings_keys]
         self.session = {key: value for key, value in values.items() if key in keys}
+        self.settings_button.setVisible(bool(keys))
         self.options_button.setVisible(bool(keys))
         self.defaults_button.setVisible(bool(keys))
         self.reset_button.setVisible(bool(keys))

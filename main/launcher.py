@@ -1607,6 +1607,9 @@ class Launcher(QWidget):
     def save_catalog_defaults(self):
         if not self.catalog_detail_active() or self.plugin_calls or self.marketplace is not None and self.marketplace.busy:
             return
+        catalog = self.catalogs[self.mode]
+        if not (catalog.option_keys or catalog.settings_keys):
+            return
         if self.package_lease is None:
             self.show_toast(Toast('Cannot save defaults', 'Package lease unavailable; restart KITE.', 'error'))
             return

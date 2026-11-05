@@ -103,6 +103,15 @@ def check():
                 window.grab().save(str(target / 'split-preview.png'))
                 window.catalog_detail.toggle_options()
                 window.grab().save(str(target / 'options.png'))
+            # Other tools retain their explicitly opted-in session/default controls.
+            import yaml
+            window.cfg['plugins']['gallery'] = {'config': {'mode': 'crop', 'duration': .5}}
+            (root / 'config.yaml').write_text(yaml.safe_dump({'plugins': {'gallery': window.cfg['plugins']['gallery']}}))
+            with patch.object(window, 'request_plugin'):
+                window.save_catalog_defaults()
+                yield 'generic save defaults', lambda: not window.marketplace.busy
+            assert not window.marketplace.error
+            assert yaml.safe_load((root / 'config.yaml').read_text())['plugins']['gallery']['config']['duration'] > .5
             # Exercise the actual optional wallpaper contract and view in the same native browser.
             source = Path(__file__).resolve().parents[2] / 'kite_plugins/plugins/hyprland-wallpapers'
             if source.exists():
@@ -121,19 +130,17 @@ def check():
                 window.configure_catalog(actual.catalog)
                 window.render()
                 yield 'wallpaper preview', lambda: window.catalog_preview_ready == window.catalog_preview_key
-                assert window.catalog_detail.quick.fields[0]['key'] == 'resize'
+                assert not window.catalog_detail.quick_box.isVisible()
+                assert all(not button.isVisible() for button in (window.catalog_detail.settings_button, window.catalog_detail.options_button,
+                                                                 window.catalog_detail.reset_button, window.catalog_detail.defaults_button))
+                window.toast.dismiss()
                 window.list.setCurrentRow(1)
                 yield 'wallpaper landscape', lambda: window.catalog_preview_ready == window.catalog_preview_key and 'Forest.png' in window.catalog_detail.caption.text()
                 if shots:
                     window.grab().save(str(Path(shots) / 'wallpaper.png'))
-                # Persist defaults through the real executor, but do not start a worker/provider as a test side effect.
-                with patch.object(window, 'request_plugin'):
-                    window.save_catalog_defaults()
-                    yield 'save defaults', lambda: not window.marketplace.busy
-                assert not window.marketplace.error
-                import yaml
-                saved = yaml.safe_load((root / 'config.yaml').read_text())
-                assert saved['plugins'][identifier]['config']['directories'] == [str(root)]
+                before = (root / 'config.yaml').read_bytes()
+                window.save_catalog_defaults()  # No inline defaults action exists for this catalog.
+                assert (root / 'config.yaml').read_bytes() == before
                 if shots:
                     window.toast.dismiss()
                     window.setFixedSize(560, 500)
@@ -150,8 +157,18 @@ def check():
                 assert folders is not None and folders.item(0).text() == str(root)
                 if shots:
                     window.grab().save(str(Path(shots) / 'settings.png'))
-                window.back()  # Retire the form without starting any wallpaper backend.
-                assert window.active_form() is None
+                from main.frontend.settings import SettingsFields
+                editor = window.plugin_detail_panel.findChild(SettingsFields)
+                editor.inherit['transition_type'].setChecked(False)
+                editor.editors['transition_type'].setCurrentText('fade')
+                editor.inherit['transition_duration'].setChecked(False)
+                editor.editors['transition_duration'].setValue(.8)
+                window.marketplace.settings_origin = False  # Exercise the global Marketplace path.
+                window.active_form().submit_button.click()
+                yield 'global wallpaper settings save', lambda: not window.marketplace.busy
+                assert not window.marketplace.error and window.active_form() is None
+                saved = yaml.safe_load((root / 'config.yaml').read_text())['plugins'][identifier]['config']
+                assert saved['directories'] == [str(root)] and saved['transition_type'] == 'fade' and saved['transition_duration'] == .8
             from main.frontend import clear_layout, render_nodes
             from main.frontend.image_preview import ImagePreview
             render_nodes(window.plugin_detail_layout,
